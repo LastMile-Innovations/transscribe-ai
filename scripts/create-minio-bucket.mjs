@@ -7,11 +7,15 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 dotenv.config({ path: resolve(root, '.env.local') })
 dotenv.config({ path: resolve(root, '.env') })
 
-const endpoint = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
+const minioPublic = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
+const minioPrivate = process.env.MINIO_PRIVATE_ENDPOINT?.replace(/\/$/, '')
+const endpoint = minioPrivate || minioPublic
 const bucket = process.env.MINIO_BUCKET
 
 if (!endpoint || !bucket) {
-  console.error('Set MINIO_PUBLIC_ENDPOINT and MINIO_BUCKET (.env.local or .env)')
+  console.error(
+    'Set MINIO_BUCKET and MINIO_PRIVATE_ENDPOINT or MINIO_PUBLIC_ENDPOINT (.env.local or .env)',
+  )
   process.exit(1)
 }
 

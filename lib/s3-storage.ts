@@ -1,6 +1,7 @@
 /**
  * S3-compatible storage via MinIO (Railway) or legacy Cloudflare R2.
- * Env: see .env.example — presigned PUT URLs use MINIO_PUBLIC_ENDPOINT; that host must be reachable from the browser.
+ * Env: see .env.example — presigned PUT URLs and public playback URLs use MINIO_PUBLIC_ENDPOINT (browser + AssemblyAI).
+ * Server SDK calls and path-style internal URLs prefer MINIO_PRIVATE_ENDPOINT when set (Railway private network).
  */
 import { GetObjectCommand, PutObjectCommand, S3Client, type S3ClientConfig } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
@@ -22,13 +23,18 @@ function encodeKeyPath(key: string): string {
 }
 
 function resolveStorage(): ResolvedStorage {
-  const minioEndpoint = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
-  if (minioEndpoint) {
+  const minioPublic = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
+  const minioPrivate = process.env.MINIO_PRIVATE_ENDPOINT?.replace(/\/$/, '')
+  if (minioPublic || minioPrivate) {
     const bucket = process.env.MINIO_BUCKET || ''
+    /** Presigned PUTs and `publicObjectUrl` use the public API host (browser + AssemblyAI). */
+    /** Server-side SDK calls and path-style “internal” URLs prefer the private endpoint when set. */
+    const sdkEndpoint = minioPrivate || minioPublic
+    const pathBaseEndpoint = minioPrivate || minioPublic
     return {
       clientConfig: {
         region: process.env.MINIO_REGION || 'us-east-1',
-        endpoint: minioEndpoint,
+        endpoint: sdkEndpoint,
         credentials: {
           accessKeyId: process.env.MINIO_ROOT_USER || '',
           secretAccessKey: process.env.MINIO_ROOT_PASSWORD || '',
@@ -36,7 +42,7 @@ function resolveStorage(): ResolvedStorage {
         forcePathStyle: true,
       },
       bucket,
-      pathStyleBase: `${minioEndpoint}/${bucket}`,
+      pathStyleBase: `${pathBaseEndpoint}/${bucket}`,
     }
   }
 
@@ -96,6 +102,26 @@ export function publicObjectUrl(key: string): string {
 }
 
 export async function presignPutObject(objectKey: string, contentType: string, expiresIn = 3600) {
+  const minioPublic = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
+  if (minioPublic) {
+    const bucket = process.env.MINIO_BUCKET || ''
+    const presignClient = new S3Client({
+      region: process.env.MINIO_REGION || 'us-east-1',
+      endpoint: minioPublic,
+      credentials: {
+        accessKeyId: process.env.MINIO_ROOT_USER || '',
+        secretAccessKey: process.env.MINIO_ROOT_PASSWORD || '',
+      },
+      forcePathStyle: true,
+    })
+    const command = new PutObjectCommand({
+      Bucket: bucket,
+      Key: objectKey,
+      ContentType: contentType,
+    })
+    return getSignedUrl(presignClient, command, { expiresIn })
+  }
+
   const client = getS3Client()
   const command = new PutObjectCommand({
     Bucket: bucketName(),

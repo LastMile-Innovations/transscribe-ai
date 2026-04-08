@@ -7,7 +7,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 dotenv.config({ path: resolve(root, '.env.local') })
 dotenv.config({ path: resolve(root, '.env') })
 
-const minioEndpoint = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
+const minioPublic = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
+const minioPrivate = process.env.MINIO_PRIVATE_ENDPOINT?.replace(/\/$/, '')
+const minioEndpoint = minioPrivate || minioPublic
 if (minioEndpoint) {
   const bucket = process.env.MINIO_BUCKET
   if (!bucket) {
@@ -76,6 +78,6 @@ if (account) {
 }
 
 console.error(
-  'No object storage env: set MINIO_PUBLIC_ENDPOINT + MINIO_BUCKET + MINIO_ROOT_* (see .env.example), or R2_* for legacy R2.',
+  'No object storage env: set MINIO_BUCKET + MINIO_ROOT_* and MINIO_PRIVATE_ENDPOINT or MINIO_PUBLIC_ENDPOINT (see .env.example), or R2_* for legacy R2.',
 )
 process.exit(1)
