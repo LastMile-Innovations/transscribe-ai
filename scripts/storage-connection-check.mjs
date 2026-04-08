@@ -1,4 +1,11 @@
-import { HeadBucketCommand, S3Client } from '@aws-sdk/client-s3'
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import dotenv from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,6 +17,37 @@ dotenv.config({ path: resolve(root, '.env') })
 const minioPublic = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
 const minioPrivate = process.env.MINIO_PRIVATE_ENDPOINT?.replace(/\/$/, '')
 const minioEndpoint = minioPrivate || minioPublic
+const accessKeyId = process.env.MINIO_ACCESS_KEY_ID || process.env.MINIO_ROOT_USER || ''
+const secretAccessKey = process.env.MINIO_SECRET_ACCESS_KEY || process.env.MINIO_ROOT_PASSWORD || ''
+
+function readMode(envName, fallback) {
+  const raw = process.env[envName]?.trim().toLowerCase()
+  if (raw === 'public' || raw === 'presigned') return raw
+  return fallback
+}
+
+function expectedUnsignedStatus() {
+  const browserMode = readMode('MINIO_BROWSER_URL_MODE', 'presigned')
+  const transcriptionMode = readMode('MINIO_TRANSCRIPTION_URL_MODE', 'presigned')
+  return browserMode === 'public' || transcriptionMode === 'public' ? 200 : 403
+}
+
+function browserPresignTtlSec() {
+  const raw = Number(process.env.MINIO_BROWSER_PRESIGN_EXPIRES_SEC)
+  return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 86400
+}
+
+function publicObjectUrl(bucket, key) {
+  const explicitBase =
+    process.env.MINIO_PUBLIC_BASE_URL?.replace(/\/$/, '') ||
+    process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, '')
+  if (explicitBase) {
+    return `${explicitBase}/${key.split('/').map(encodeURIComponent).join('/')}`
+  }
+  if (!minioPublic) return ''
+  return `${minioPublic}/${bucket}/${key.split('/').map(encodeURIComponent).join('/')}`
+}
+
 if (minioEndpoint) {
   const bucket = process.env.MINIO_BUCKET
   if (!bucket) {
@@ -20,11 +58,23 @@ if (minioEndpoint) {
     region: process.env.MINIO_REGION || 'us-east-1',
     endpoint: minioEndpoint,
     credentials: {
-      accessKeyId: process.env.MINIO_ROOT_USER || '',
-      secretAccessKey: process.env.MINIO_ROOT_PASSWORD || '',
+      accessKeyId,
+      secretAccessKey,
     },
     forcePathStyle: true,
   })
+  const presignClient =
+    minioPublic
+      ? new S3Client({
+          region: process.env.MINIO_REGION || 'us-east-1',
+          endpoint: minioPublic,
+          credentials: {
+            accessKeyId,
+            secretAccessKey,
+          },
+          forcePathStyle: true,
+        })
+      : client
   function hostLooksPrivate(urlStr) {
     try {
       const u = new URL(urlStr)
@@ -38,38 +88,79 @@ if (minioEndpoint) {
     }
   }
 
+  const smokeKey = `debug/storage-smoke-${Date.now()}.txt`
+  const smokeBody = `storage-smoke:${new Date().toISOString()}`
+
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }))
     console.log('MinIO connection OK — bucket:', bucket)
-    console.log('  endpoint:', minioEndpoint)
-    const pub = minioPublic || ''
-    const explicitBase =
-      process.env.MINIO_PUBLIC_BASE_URL?.replace(/\/$/, '') ||
-      process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, '')
-    const sampleKey = 'workspace/example-project/original/example.mp4'
-    let samplePublic
-    if (explicitBase) {
-      samplePublic = `${explicitBase}/${sampleKey.split('/').map(encodeURIComponent).join('/')}`
-    } else if (pub && bucket) {
-      samplePublic = `${pub}/${bucket}/${sampleKey.split('/').map(encodeURIComponent).join('/')}`
+    console.log('  server endpoint:', minioEndpoint)
+
+    const putUrl = await getSignedUrl(
+      presignClient,
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: smokeKey,
+        ContentType: 'text/plain',
+      }),
+      { expiresIn: Math.min(browserPresignTtlSec(), 900) },
+    )
+    const putRes = await fetch(putUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/plain' },
+      body: smokeBody,
+    })
+    if (!putRes.ok) {
+      throw new Error(`Presigned PUT failed with HTTP ${putRes.status}`)
     }
-    if (samplePublic) {
-      console.log('')
-      console.log('AssemblyAI / browser playback: objects must be reachable at a public HTTPS URL, e.g.')
-      console.log(' ', samplePublic)
-      const httpsCheckBase = explicitBase || pub
-      if (httpsCheckBase && !httpsCheckBase.startsWith('https://')) {
+    console.log('Presigned PUT OK')
+
+    const getUrl = await getSignedUrl(
+      presignClient,
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: smokeKey,
+      }),
+      { expiresIn: Math.min(browserPresignTtlSec(), 900) },
+    )
+    const getRes = await fetch(getUrl)
+    if (!getRes.ok) {
+      throw new Error(`Presigned GET failed with HTTP ${getRes.status}`)
+    }
+    const getBody = await getRes.text()
+    if (getBody !== smokeBody) {
+      throw new Error('Presigned GET returned unexpected object contents')
+    }
+    console.log('Presigned GET OK')
+
+    const publicUrl = publicObjectUrl(bucket, smokeKey)
+    if (publicUrl) {
+      console.log('Unsigned public URL:', publicUrl)
+      const httpsCheckBase = publicUrl
+      if (!publicUrl.startsWith('https://')) {
         console.warn(
           '  WARNING: Use https:// for the public object base so AssemblyAI can fetch audio_url.',
         )
       }
-      if (hostLooksPrivate(httpsCheckBase || '')) {
+      if (hostLooksPrivate(httpsCheckBase)) {
         console.warn(
           '  WARNING: Public base looks local or private. Use a public host for MINIO_PUBLIC_* / MINIO_PUBLIC_BASE_URL;',
           'otherwise the app streams media through your server to AssemblyAI (slower, more egress).',
         )
       }
+
+      const unsignedRes = await fetch(publicUrl)
+      const expectedStatus = expectedUnsignedStatus()
+      if (unsignedRes.status !== expectedStatus) {
+        throw new Error(
+          `Unsigned public URL returned HTTP ${unsignedRes.status}; expected HTTP ${expectedStatus} for current URL mode.`,
+        )
+      }
+      console.log(`Unsigned public URL matched expected HTTP ${expectedStatus}`)
     }
+
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: smokeKey }))
+    console.log('Smoke object cleanup OK')
   } catch (e) {
     const meta = e.$metadata
     const hint =
@@ -77,11 +168,16 @@ if (minioEndpoint) {
         ? ' (bucket missing or wrong MINIO_BUCKET name — create it in MinIO or fix spelling)'
         : ''
     console.error(
-      'MinIO connection failed:',
+      'MinIO smoke test failed:',
       e.name || e.message || e,
       meta?.httpStatusCode != null ? `HTTP ${meta.httpStatusCode}` : '',
       hint,
     )
+    try {
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: smokeKey }))
+    } catch {
+      /* best-effort cleanup */
+    }
     process.exit(1)
   }
   process.exit(0)

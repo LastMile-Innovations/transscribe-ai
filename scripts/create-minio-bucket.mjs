@@ -11,6 +11,8 @@ const minioPublic = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
 const minioPrivate = process.env.MINIO_PRIVATE_ENDPOINT?.replace(/\/$/, '')
 const endpoint = minioPrivate || minioPublic
 const bucket = process.env.MINIO_BUCKET
+const accessKeyId = process.env.MINIO_ACCESS_KEY_ID || process.env.MINIO_ROOT_USER || ''
+const secretAccessKey = process.env.MINIO_SECRET_ACCESS_KEY || process.env.MINIO_ROOT_PASSWORD || ''
 
 if (!endpoint || !bucket) {
   console.error(
@@ -23,8 +25,8 @@ const client = new S3Client({
   region: process.env.MINIO_REGION || 'us-east-1',
   endpoint,
   credentials: {
-    accessKeyId: process.env.MINIO_ROOT_USER || '',
-    secretAccessKey: process.env.MINIO_ROOT_PASSWORD || '',
+    accessKeyId,
+    secretAccessKey,
   },
   forcePathStyle: true,
 })

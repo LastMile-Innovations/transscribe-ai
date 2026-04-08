@@ -7,6 +7,9 @@ import {
   Trash2,
   Merge,
   Copy,
+  CheckCircle2,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -14,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useApp } from '@/lib/app-context'
 import type { TranscriptSegment } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { updateSegmentAction, addSegmentAction, deleteSegmentAction, mergeSegmentsAction } from '@/lib/actions'
 
 function formatTime(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000)
@@ -42,8 +46,8 @@ function ConfidenceBar({ value }: { value: number }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="mt-1 h-0.5 w-full overflow-hidden rounded-full bg-muted">
-          <div className={cn('h-full rounded-full', color)} style={{ width: `${pct}%` }} />
+        <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted/50">
+          <div className={cn('h-full rounded-full transition-all duration-500', color)} style={{ width: `${pct}%` }} />
         </div>
       </TooltipTrigger>
       <TooltipContent>{pct}% confidence</TooltipContent>
@@ -58,6 +62,7 @@ function SegmentRow({
   isNextMergeable,
   nextSegmentId,
   onSeek,
+  onSaveStatus,
 }: {
   segment: TranscriptSegment
   index: number
@@ -65,11 +70,13 @@ function SegmentRow({
   isNextMergeable: boolean
   nextSegmentId: string | null
   onSeek: (ms: number) => void
+  onSaveStatus: (status: 'saving' | 'saved' | 'error') => void
 }) {
-  const { dispatch } = useApp()
+  const { state, dispatch } = useApp()
   const rowRef = useRef<HTMLDivElement>(null)
   const [editingSpeaker, setEditingSpeaker] = useState(false)
   const [speakerValue, setSpeakerValue] = useState(segment.speaker)
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Auto-scroll active segment into view
   useEffect(() => {
@@ -81,21 +88,44 @@ function SegmentRow({
   const updateText = useCallback(
     (text: string) => {
       dispatch({ type: 'UPDATE_SEGMENT', id: segment.id, updates: { text } })
+      onSaveStatus('saving')
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = setTimeout(() => {
+        updateSegmentAction(segment.id, { text })
+          .then(() => onSaveStatus('saved'))
+          .catch(() => {
+            onSaveStatus('error')
+            toast.error('Failed to save segment text.')
+          })
+      }, 1000)
     },
-    [dispatch, segment.id],
+    [dispatch, segment.id, onSaveStatus],
   )
 
   const commitSpeaker = useCallback(() => {
     const trimmed = speakerValue.trim()
     if (trimmed && trimmed !== segment.speaker) {
       dispatch({ type: 'UPDATE_SEGMENT', id: segment.id, updates: { speaker: trimmed } })
+      onSaveStatus('saving')
+      updateSegmentAction(segment.id, { speaker: trimmed })
+        .then(() => onSaveStatus('saved'))
+        .catch(() => {
+          onSaveStatus('error')
+          toast.error('Failed to save speaker.')
+        })
     }
     setEditingSpeaker(false)
-  }, [dispatch, segment.id, segment.speaker, speakerValue])
+  }, [dispatch, segment.id, segment.speaker, speakerValue, onSaveStatus])
 
   const handleDelete = () => {
     dispatch({ type: 'DELETE_SEGMENT', id: segment.id })
-    toast.success('Segment deleted.')
+    onSaveStatus('saving')
+    deleteSegmentAction(segment.id)
+      .then(() => onSaveStatus('saved'))
+      .catch(() => {
+        onSaveStatus('error')
+        toast.error('Failed to delete segment.')
+      })
   }
 
   const handleAddAfter = () => {
@@ -108,13 +138,32 @@ function SegmentRow({
       confidence: 1,
     }
     dispatch({ type: 'ADD_SEGMENT', segment: newSeg, afterId: segment.id })
-    toast.success('Segment added.')
+    if (state.transcript) {
+      onSaveStatus('saving')
+      addSegmentAction(state.transcript.id, newSeg)
+        .then(() => onSaveStatus('saved'))
+        .catch(() => {
+          onSaveStatus('error')
+          toast.error('Failed to add segment.')
+        })
+    }
   }
 
   const handleMerge = () => {
     if (!nextSegmentId) return
+    const nextSeg = state.transcript?.segments.find((s) => s.id === nextSegmentId)
+    if (!nextSeg) return
+    const mergedText = `${segment.text} ${nextSeg.text}`
+    const mergedEnd = nextSeg.end
+    const mergedConfidence = (segment.confidence + nextSeg.confidence) / 2
     dispatch({ type: 'MERGE_SEGMENTS', id1: segment.id, id2: nextSegmentId })
-    toast.success('Segments merged.')
+    onSaveStatus('saving')
+    mergeSegmentsAction(segment.id, nextSegmentId, mergedText, mergedEnd, mergedConfidence)
+      .then(() => onSaveStatus('saved'))
+      .catch(() => {
+        onSaveStatus('error')
+        toast.error('Failed to merge segments.')
+      })
   }
 
   const handleCopy = () => {
@@ -143,17 +192,19 @@ function SegmentRow({
           <button
             type="button"
             onClick={() => onSeek(segment.start)}
-            className="shrink-0 font-mono text-xs text-muted-foreground hover:text-brand transition-colors"
+            className="shrink-0 font-mono text-xs text-muted-foreground hover:text-brand hover:bg-brand/10 px-1 py-0.5 rounded transition-colors"
+            title="Seek to start"
           >
             {formatTime(segment.start)}
           </button>
 
-          <span className="text-xs text-muted-foreground/50">–</span>
+          <span className="text-[10px] text-muted-foreground/40">–</span>
 
           <button
             type="button"
             onClick={() => onSeek(segment.end)}
-            className="shrink-0 font-mono text-xs text-muted-foreground hover:text-brand transition-colors"
+            className="shrink-0 font-mono text-xs text-muted-foreground hover:text-brand hover:bg-brand/10 px-1 py-0.5 rounded transition-colors"
+            title="Seek to end"
           >
             {formatTime(segment.end)}
           </button>
@@ -227,8 +278,8 @@ function SegmentRow({
         <textarea
           value={segment.text}
           onChange={(e) => updateText(e.target.value)}
-          rows={2}
-          className="w-full resize-none rounded bg-transparent pl-2 font-sans text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground focus:bg-background/50"
+          rows={Math.max(2, Math.ceil(segment.text.length / 65))}
+          className="w-full resize-none rounded bg-transparent pl-2 font-sans text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground focus:bg-background/50 transition-colors"
           placeholder="Transcript text..."
         />
 
@@ -255,18 +306,36 @@ function SegmentRow({
 export function TranscriptEditor() {
   const { state, dispatch } = useApp()
   const [searchTerm, setSearchTerm] = useState('')
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
   const transcript = state.transcript
   const playerTime = state.playerTime
 
   const seek = useCallback(
     (ms: number) => {
-      const video = document.querySelector('video')
-      if (video) video.currentTime = ms / 1000
+      window.dispatchEvent(new CustomEvent('app:seek', { detail: { timeMs: ms } }))
       dispatch({ type: 'SET_PLAYER_TIME', time: ms })
     },
     [dispatch],
   )
+
+  const handleSaveStatus = useCallback((status: 'saving' | 'saved' | 'error') => {
+    setSaveStatus(status)
+    if (status === 'saved') {
+      setTimeout(() => setSaveStatus('idle'), 2000)
+    }
+  }, [])
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (saveStatus === 'saving') {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [saveStatus])
 
   const handleExportClipboard = () => {
     if (!transcript) return
@@ -275,14 +344,6 @@ export function TranscriptEditor() {
       .join('\n\n')
     navigator.clipboard.writeText(text)
     toast.success('Full transcript copied to clipboard.')
-  }
-
-  if (!transcript) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        No transcript available.
-      </div>
-    )
   }
 
   const filtered = useMemo(() => {
@@ -302,6 +363,14 @@ export function TranscriptEditor() {
       (s) => playerTime >= s.start && playerTime <= s.end,
     )?.id
   }, [transcript, playerTime])
+
+  if (!transcript) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        No transcript available.
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -332,6 +401,26 @@ export function TranscriptEditor() {
           <Copy className="size-3 md:mr-1" />
           <span className="hidden md:inline">Copy all</span>
         </Button>
+        <div className="flex items-center justify-center w-16 shrink-0">
+          {saveStatus === 'saving' && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="size-3 animate-spin" />
+              <span>Saving</span>
+            </div>
+          )}
+          {saveStatus === 'saved' && (
+            <div className="flex items-center gap-1 text-xs text-green-500">
+              <CheckCircle2 className="size-3" />
+              <span>Saved</span>
+            </div>
+          )}
+          {saveStatus === 'error' && (
+            <div className="flex items-center gap-1 text-xs text-destructive">
+              <AlertCircle className="size-3" />
+              <span>Error</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Segments */}
@@ -348,6 +437,7 @@ export function TranscriptEditor() {
                 isNextMergeable={nextSeg !== null && nextSeg.speaker === seg.speaker}
                 nextSegmentId={nextSeg?.id ?? null}
                 onSeek={seek}
+                onSaveStatus={handleSaveStatus}
               />
             )
           })}

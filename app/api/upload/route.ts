@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server'
-import { presignPutObject, publicObjectUrl } from '@/lib/s3-storage'
+import {
+  browserObjectUrl,
+  createMultipartUploadPlan,
+  multipartUploadThresholdBytes,
+  presignPutObject,
+  shouldUseMultipartUpload,
+} from '@/lib/s3-storage'
 import { isUploadKeyForWorkspace, requireWorkspaceAccessForRoute } from '@/lib/workspace-access'
 
 export async function POST(request: Request) {
@@ -7,6 +13,7 @@ export async function POST(request: Request) {
     const body = await request.json()
     const filename = body.filename as string | undefined
     const contentType = body.contentType as string | undefined
+    const fileSize = typeof body.fileSize === 'number' ? body.fileSize : null
     const workspaceProjectId = body.workspaceProjectId as string | undefined
 
     if (!filename || !contentType) {
@@ -29,11 +36,26 @@ export async function POST(request: Request) {
       )
     }
 
+    const url = await browserObjectUrl(filename).catch(() => null)
+    const thresholdBytes = multipartUploadThresholdBytes()
+
+    if (fileSize != null && shouldUseMultipartUpload(fileSize)) {
+      const multipart = await createMultipartUploadPlan(filename, contentType, fileSize)
+      return NextResponse.json({
+        uploadType: 'multipart' as const,
+        url,
+        thresholdBytes,
+        ...multipart,
+      })
+    }
+
     const signedUrl = await presignPutObject(filename, contentType)
 
     return NextResponse.json({
+      uploadType: 'single' as const,
       signedUrl,
-      url: publicObjectUrl(filename),
+      url,
+      thresholdBytes,
     })
   } catch (error) {
     console.error('Error generating presigned URL:', error)

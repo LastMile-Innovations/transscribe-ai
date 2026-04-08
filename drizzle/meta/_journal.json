@@ -50,6 +50,13 @@
       "when": 1775685922360,
       "tag": "0006_awaiting_transcript_status",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1775688245789,
+      "tag": "0007_indexes_and_assembly_ai_unique",
+      "breakpoints": true
     }
   ]
 }

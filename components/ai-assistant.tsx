@@ -19,6 +19,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useApp } from '@/lib/app-context'
 import type { TextOverlay } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { updateSegmentAction } from '@/lib/actions'
 import { useChat } from '@ai-sdk/react'
 import {
   DefaultChatTransport,
@@ -63,7 +64,6 @@ function ToolCallCard({
   errorText?: string
 }) {
   const ACTION_ICONS: Record<string, string> = {
-    editSegment: 'Edit segment',
     addOverlay: 'Add overlays',
     trimVideo: 'Trim video',
     removeFillerWords: 'Remove filler words',
@@ -236,6 +236,7 @@ export function AIAssistant() {
             cleaned = cleaned.replace(/\s+/g, ' ').trim()
             if (cleaned !== seg.text) {
               dispatch({ type: 'UPDATE_SEGMENT', id: seg.id, updates: { text: cleaned } })
+              updateSegmentAction(seg.id, { text: cleaned }).catch(() => {})
             }
           })
           toast.success('Filler words removed from transcript.')
@@ -250,6 +251,7 @@ export function AIAssistant() {
               .trim()
             if (fixed !== seg.text) {
               dispatch({ type: 'UPDATE_SEGMENT', id: seg.id, updates: { text: fixed } })
+              updateSegmentAction(seg.id, { text: fixed }).catch(() => {})
             }
           })
           toast.success('Grammar fixes applied.')

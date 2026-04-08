@@ -60,6 +60,39 @@ export default function EditorPage({
   }, [id, transcriptIdParam, dispatch, router])
 
   const project = state.projects.find((p) => p.id === id)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input or textarea
+      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') {
+        return
+      }
+
+      if (e.key === ' ') {
+        e.preventDefault()
+        dispatch({ type: 'SET_PLAYING', isPlaying: !state.isPlaying })
+      } else if (e.key === 'j') {
+        e.preventDefault()
+        const newTime = Math.max(0, state.playerTime - 5000)
+        window.dispatchEvent(new CustomEvent('app:seek', { detail: { timeMs: newTime } }))
+        dispatch({ type: 'SET_PLAYER_TIME', time: newTime })
+      } else if (e.key === 'l') {
+        e.preventDefault()
+        const duration = project?.duration ?? 0
+        const newTime = Math.min(duration, state.playerTime + 5000)
+        window.dispatchEvent(new CustomEvent('app:seek', { detail: { timeMs: newTime } }))
+        dispatch({ type: 'SET_PLAYER_TIME', time: newTime })
+      } else if (e.key === '/') {
+        e.preventDefault()
+        const searchInput = document.querySelector('input[type="search"]') as HTMLInputElement
+        if (searchInput) searchInput.focus()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [state.isPlaying, state.playerTime, project?.duration, dispatch])
+
   if (!project)
     return (
       <div className="flex h-screen items-center justify-center bg-background">

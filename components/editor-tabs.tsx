@@ -29,7 +29,7 @@ export function EditorTabs() {
           </TabsTrigger>
           <TabsTrigger value="overlays" className="h-7 gap-1.5 px-3 text-xs">
             <Layers className="size-3.5 shrink-0" />
-            <span className="hidden sm:inline">Overlays</span>
+            <span className="hidden sm:inline">Overlays (Preview)</span>
             <span className="sm:hidden">Over.</span>
             {overlayCount > 0 && (
               <span className="ml-0.5 rounded-full bg-muted px-1.5 py-0.5 text-xs font-mono leading-none text-muted-foreground">
@@ -39,7 +39,7 @@ export function EditorTabs() {
           </TabsTrigger>
           <TabsTrigger value="trim" className="h-7 gap-1.5 px-3 text-xs">
             <Scissors className="size-3.5 shrink-0" />
-            Trim
+            Trim (Preview)
           </TabsTrigger>
         </TabsList>
       </div>

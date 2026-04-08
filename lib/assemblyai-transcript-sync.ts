@@ -1,5 +1,5 @@
 import { AssemblyAI } from 'assemblyai'
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { projects, transcripts, transcriptSegments } from '@/lib/db/schema'
 
@@ -178,6 +178,33 @@ async function persistCompletedTranscript(
 }
 
 /**
+ * Resolve DB transcript row for polling: by AssemblyAI id, scoped to project.
+ * Rejects stale/wrong client transcriptId or cross-project assembly id reuse.
+ */
+async function resolveTranscriptRowForPoll(
+  assemblyAiId: string,
+  projectId: string,
+  transcriptId: string | undefined,
+): Promise<{ ok: true; row: TranscriptRow | undefined } | { ok: false; error: string }> {
+  const [found] = await db
+    .select()
+    .from(transcripts)
+    .where(eq(transcripts.assemblyAiTranscriptId, assemblyAiId))
+    .limit(1)
+
+  if (!found) {
+    return { ok: true, row: undefined }
+  }
+  if (found.projectId !== projectId) {
+    return { ok: false, error: 'Transcript does not belong to this project' }
+  }
+  if (transcriptId !== undefined && transcriptId !== '' && transcriptId !== found.id) {
+    return { ok: false, error: 'Transcript id does not match AssemblyAI job' }
+  }
+  return { ok: true, row: found }
+}
+
+/**
  * Poll handler + webhook: load AssemblyAI transcript, update DB for completed / error / in-progress.
  */
 export async function syncTranscriptFromAssemblyAi(
@@ -191,18 +218,11 @@ export async function syncTranscriptFromAssemblyAi(
 
   const transcriptResult = await client.transcripts.get(assemblyAiId)
 
-  const rowConditions = [eq(transcripts.assemblyAiTranscriptId, assemblyAiId)]
-  if (transcriptId) {
-    rowConditions.push(eq(transcripts.id, transcriptId))
+  const resolved = await resolveTranscriptRowForPoll(assemblyAiId, projectId, transcriptId)
+  if (!resolved.ok) {
+    return { status: 'error', error: resolved.error }
   }
-
-  const matchedRows = await db
-    .select()
-    .from(transcripts)
-    .where(and(...rowConditions))
-    .limit(1)
-
-  const dbTranscript = matchedRows[0]
+  const dbTranscript = resolved.row
 
   if (transcriptResult.status === 'completed') {
     const out = await persistCompletedTranscript(projectId, dbTranscript, transcriptResult, assemblyAiId)

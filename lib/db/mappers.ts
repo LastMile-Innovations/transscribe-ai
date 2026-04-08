@@ -30,7 +30,7 @@ export function transcriptSegmentRowToSegment(row: TranscriptSegmentRow): Transc
     text: row.text,
     speaker: row.speaker,
     confidence: row.confidence,
-    words: row.words as TranscriptSegment['words'],
+    words: row.words ?? undefined,
   }
 }
 

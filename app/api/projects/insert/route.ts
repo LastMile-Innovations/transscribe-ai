@@ -1,19 +1,21 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { projects } from '@/lib/db/schema'
-import type { ProjectStatus } from '@/lib/types'
+import type { StoredMediaMetadata } from '@/lib/media-metadata'
+import { insertProjectBodySchema } from '@/lib/validation/projects'
 import { requireWorkspaceAccessForRoute } from '@/lib/workspace-access'
 
 export async function POST(request: Request) {
   try {
-    const projectData = await request.json()
-
-    if (!projectData.id || !projectData.title || !projectData.workspaceProjectId) {
+    const raw = await request.json()
+    const parsed = insertProjectBodySchema.safeParse(raw)
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Missing required project fields (id, title, workspaceProjectId)' },
+        { error: 'Invalid project payload', issues: parsed.error.flatten() },
         { status: 400 },
       )
     }
+    const projectData = parsed.data
 
     const access = await requireWorkspaceAccessForRoute(projectData.workspaceProjectId, 'editor')
     if (access instanceof NextResponse) return access
@@ -25,13 +27,13 @@ export async function POST(request: Request) {
         title: projectData.title,
         fileName: projectData.fileName,
         duration: projectData.duration,
-        status: projectData.status as ProjectStatus,
+        status: projectData.status,
         thumbnailUrl: projectData.thumbnailUrl,
         fileUrl: projectData.fileUrl ?? null,
         originalFileUrl: projectData.originalFileUrl ?? null,
         sha256Hash: projectData.sha256Hash ?? null,
-        mediaMetadata: projectData.mediaMetadata ?? null,
-        transcriptionProgress: projectData.transcriptionProgress || 0,
+        mediaMetadata: (projectData.mediaMetadata ?? null) as StoredMediaMetadata | null,
+        transcriptionProgress: projectData.transcriptionProgress ?? 0,
         uploadedAt: new Date(),
         workspaceProjectId: projectData.workspaceProjectId,
         folderId: projectData.folderId ?? null,

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
+import { UserButton, SignInButton, SignUpButton, Show } from '@clerk/nextjs'
 import {
   ArrowLeft,
   Sparkles,
@@ -18,11 +19,18 @@ import {
   Info,
   Menu,
   Bot,
+  HelpCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -528,14 +536,24 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
-        <Button variant="outline" size="sm" onClick={exportTranscript} className="hidden sm:flex">
-          <FileText className="size-4" />
-          Export TXT
-        </Button>
-        <Button variant="outline" size="sm" onClick={exportSRT} className="hidden sm:flex">
-          <Download className="size-4" />
-          Export SRT
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="sm" onClick={exportTranscript} className="hidden sm:flex">
+              <FileText className="size-4" />
+              Export TXT
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Includes latest unsaved changes</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="sm" onClick={exportSRT} className="hidden sm:flex">
+              <Download className="size-4" />
+              Export SRT
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Includes latest unsaved changes</TooltipContent>
+        </Tooltip>
         <Button
           variant="outline"
           size="icon-sm"
@@ -547,6 +565,34 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
         >
           <Info className="size-4" />
         </Button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="icon-sm" className="hidden sm:flex">
+              <HelpCircle className="size-4" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-64 p-3">
+            <h4 className="mb-2 text-sm font-semibold">Keyboard Shortcuts</h4>
+            <div className="flex flex-col gap-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Play / Pause</span>
+                <kbd className="rounded bg-muted px-1.5 font-mono">Space</kbd>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Skip back 5s</span>
+                <kbd className="rounded bg-muted px-1.5 font-mono">J</kbd>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Skip forward 5s</span>
+                <kbd className="rounded bg-muted px-1.5 font-mono">L</kbd>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Search transcript</span>
+                <kbd className="rounded bg-muted px-1.5 font-mono">/</kbd>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
         <ThemeToggle />
         
         {/* Mobile Menu */}
@@ -625,6 +671,13 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        <Show when="signed-out">
+          <SignInButton />
+          <SignUpButton />
+        </Show>
+        <Show when="signed-in">
+          <UserButton />
+        </Show>
       </div>
 
       <MediaMetadataDialog
@@ -640,6 +693,7 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             Runs AssemblyAI again on this video and saves an additional transcript you can switch between.
+            Uses the default &quot;Universal-3 Pro&quot; model. To customize settings, go back to the Library.
           </p>
           <div className="flex flex-col gap-2 py-2">
             <Label>Optional label</Label>

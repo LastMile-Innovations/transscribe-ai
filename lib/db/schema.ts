@@ -1,7 +1,8 @@
-import { relations } from 'drizzle-orm'
+import { relations, sql } from 'drizzle-orm'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 import type { StoredMediaMetadata } from '@/lib/media-metadata'
 import {
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -10,8 +11,17 @@ import {
   real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
+
+/** JSONB shape for `transcript_segments.words` (matches `TranscriptWord` in app types). */
+export type StoredTranscriptWord = {
+  text: string
+  start: number
+  end: number
+  confidence: number
+}
 
 export const projectStatusEnum = pgEnum('project_status', [
   'uploading',
@@ -47,6 +57,7 @@ export const workspaceMembers = pgTable(
   },
   (t) => ({
     pk: primaryKey({ columns: [t.workspaceProjectId, t.userId] }),
+    userIdIdx: index('workspace_members_user_id_idx').on(t.userId),
   }),
 )
 
@@ -62,50 +73,72 @@ export const folders = pgTable('folders', {
   sortOrder: integer('sort_order').notNull().default(0),
 })
 
-export const projects = pgTable('projects', {
-  id: text('id').primaryKey(),
-  title: text('title').notNull(),
-  fileName: text('file_name').notNull(),
-  duration: integer('duration').notNull(),
-  uploadedAt: timestamp('uploaded_at').notNull().defaultNow(),
-  status: projectStatusEnum('status').notNull(),
-  thumbnailUrl: text('thumbnail_url').notNull(),
-  fileUrl: text('file_url'),
-  /** Public URL of byte-identical original upload (evidence vault). */
-  originalFileUrl: text('original_file_url'),
-  transcriptionProgress: integer('transcription_progress').notNull().default(0),
-  workspaceProjectId: text('workspace_project_id')
-    .notNull()
-    .references(() => workspaceProjects.id, { onDelete: 'cascade' }),
-  folderId: text('folder_id').references(() => folders.id, { onDelete: 'set null' }),
-  caseId: text('case_id'),
-  exhibitNumber: text('exhibit_number'),
-  sha256Hash: text('sha256_hash'),
-  /** ffprobe JSON (original + edit) and derived fields for UI. */
-  mediaMetadata: jsonb('media_metadata').$type<StoredMediaMetadata | null>(),
-})
+export const projects = pgTable(
+  'projects',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    fileName: text('file_name').notNull(),
+    duration: integer('duration').notNull(),
+    uploadedAt: timestamp('uploaded_at').notNull().defaultNow(),
+    status: projectStatusEnum('status').notNull(),
+    thumbnailUrl: text('thumbnail_url').notNull(),
+    fileUrl: text('file_url'),
+    /** Browser-accessible URL of byte-identical original upload (evidence vault). */
+    originalFileUrl: text('original_file_url'),
+    transcriptionProgress: integer('transcription_progress').notNull().default(0),
+    workspaceProjectId: text('workspace_project_id')
+      .notNull()
+      .references(() => workspaceProjects.id, { onDelete: 'cascade' }),
+    folderId: text('folder_id').references(() => folders.id, { onDelete: 'set null' }),
+    caseId: text('case_id'),
+    exhibitNumber: text('exhibit_number'),
+    sha256Hash: text('sha256_hash'),
+    /** ffprobe JSON (original + edit) and derived fields for UI. */
+    mediaMetadata: jsonb('media_metadata').$type<StoredMediaMetadata | null>(),
+  },
+  (t) => ({
+    workspaceProjectIdIdx: index('projects_workspace_project_id_idx').on(t.workspaceProjectId),
+  }),
+)
 
-export const transcripts = pgTable('transcripts', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
-  language: text('language').notNull(),
-  totalDuration: integer('total_duration').notNull(),
-  speechModel: text('speech_model'),
-  label: text('label'),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  assemblyAiTranscriptId: text('assembly_ai_transcript_id'),
-})
+export const transcripts = pgTable(
+  'transcripts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    language: text('language').notNull(),
+    totalDuration: integer('total_duration').notNull(),
+    speechModel: text('speech_model'),
+    label: text('label'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    assemblyAiTranscriptId: text('assembly_ai_transcript_id'),
+  },
+  (t) => ({
+    projectIdIdx: index('transcripts_project_id_idx').on(t.projectId),
+    /** One pending row per AssemblyAI job; multiple NULLs allowed for legacy rows. */
+    assemblyAiTranscriptIdUq: uniqueIndex('transcripts_assembly_ai_transcript_id_uq')
+      .on(t.assemblyAiTranscriptId)
+      .where(sql`${t.assemblyAiTranscriptId} IS NOT NULL`),
+  }),
+)
 
-export const transcriptSegments = pgTable('transcript_segments', {
-  id: text('id').primaryKey(),
-  transcriptId: uuid('transcript_id').notNull().references(() => transcripts.id, { onDelete: 'cascade' }),
-  start: integer('start').notNull(),
-  end: integer('end').notNull(),
-  text: text('text').notNull(),
-  speaker: text('speaker').notNull(),
-  confidence: real('confidence').notNull(),
-  words: jsonb('words'),
-})
+export const transcriptSegments = pgTable(
+  'transcript_segments',
+  {
+    id: text('id').primaryKey(),
+    transcriptId: uuid('transcript_id').notNull().references(() => transcripts.id, { onDelete: 'cascade' }),
+    start: integer('start').notNull(),
+    end: integer('end').notNull(),
+    text: text('text').notNull(),
+    speaker: text('speaker').notNull(),
+    confidence: real('confidence').notNull(),
+    words: jsonb('words').$type<StoredTranscriptWord[] | null>(),
+  },
+  (t) => ({
+    transcriptIdIdx: index('transcript_segments_transcript_id_idx').on(t.transcriptId),
+  }),
+)
 
 export const textOverlays = pgTable('text_overlays', {
   id: text('id').primaryKey(),

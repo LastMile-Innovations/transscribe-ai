@@ -1,6 +1,6 @@
 'use client'
 
-import { useUser } from '@clerk/nextjs'
+import { useUser, UserButton, SignInButton, SignUpButton, Show } from '@clerk/nextjs'
 import { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
@@ -79,6 +79,28 @@ import { buildClientMediaCapture } from '@/lib/client-media-capture'
 import { buildOriginalUploadKey } from '@/lib/media-keys'
 import { pollTranscriptionUntilComplete } from '@/lib/transcription-poll-client'
 import { cn } from '@/lib/utils'
+
+type UploadHandle = {
+  abort: () => void
+}
+
+type SingleUploadPlan = {
+  uploadType: 'single'
+  signedUrl: string
+  url: string | null
+  thresholdBytes: number
+}
+
+type MultipartUploadPlan = {
+  uploadType: 'multipart'
+  uploadId: string
+  partSize: number
+  parts: Array<{ partNumber: number; signedUrl: string }>
+  url: string | null
+  thresholdBytes: number
+}
+
+type UploadPlan = SingleUploadPlan | MultipartUploadPlan
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000)
@@ -160,6 +182,7 @@ function ProjectCard({
   onMoveToFolder,
   onRenameTitle,
   onStartTranscription,
+  onCancelUpload,
 }: {
   project: VideoProject
   onOpen: (id: string) => void
@@ -167,6 +190,7 @@ function ProjectCard({
   onMoveToFolder?: (mediaId: string, folderId: string | null) => void
   onRenameTitle?: (mediaId: string, title: string) => Promise<void>
   onStartTranscription?: (mediaId: string) => void
+  onCancelUpload?: (mediaId: string) => void
 }) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState('')
@@ -208,10 +232,19 @@ function ProjectCard({
 
   return (
     <div
+      role={canOpenInEditor ? 'button' : 'article'}
+      tabIndex={canOpenInEditor ? 0 : undefined}
+      aria-busy={isProcessing}
+      onKeyDown={(e) => {
+        if (canOpenInEditor && e.key === 'Enter') {
+          e.preventDefault()
+          onOpen(project.id)
+        }
+      }}
       className={cn(
-        'group relative flex flex-col overflow-hidden rounded-xl border bg-card transition-all duration-200',
+        'group relative flex flex-col overflow-hidden rounded-xl border bg-card transition-all duration-300 animate-in fade-in zoom-in-95',
         canOpenInEditor
-          ? 'cursor-pointer hover:border-brand/50 hover:shadow-lg hover:shadow-brand/5'
+          ? 'cursor-pointer hover:border-brand/50 hover:shadow-xl hover:shadow-brand/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand hover:-translate-y-0.5'
           : 'cursor-default',
       )}
       onClick={() => canOpenInEditor && onOpen(project.id)}
@@ -237,11 +270,11 @@ function ProjectCard({
             <Loader2 className="size-8 shrink-0 animate-spin text-brand" />
             <span className="text-sm font-medium text-white">
               {project.status === 'uploading'
-                ? 'Uploading to vault…'
+                ? 'Step 1 of 3: Uploading to vault…'
                 : project.mediaStep === 'prepare'
-                  ? 'Preparing editor MP4 (transcoding)…'
+                  ? 'Step 2 of 3: Preparing editor MP4…'
                   : project.mediaStep === 'transcribe'
-                    ? 'Transcribing with AssemblyAI…'
+                    ? 'Step 3 of 3: Transcribing with AssemblyAI…'
                     : 'Processing…'}
             </span>
             {project.status === 'uploading' && project.uploadProgress ? (
@@ -251,6 +284,20 @@ function ProjectCard({
               <Progress value={project.transcriptionProgress} className="h-1.5" />
             </div>
             <span className="text-xs text-white/70 tabular-nums">{project.transcriptionProgress}%</span>
+            
+            {project.status === 'uploading' && onCancelUpload && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-1 h-6 text-[10px] border-white/20 bg-white/10 text-white hover:bg-white/20"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onCancelUpload(project.id)
+                }}
+              >
+                Cancel
+              </Button>
+            )}
           </div>
         )}
         {/* Duration badge */}
@@ -358,6 +405,28 @@ function ProjectCard({
           </p>
         )}
 
+        {project.status === 'error' && project.fileUrl && onStartTranscription && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            className="mt-2"
+          >
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="w-full gap-2 border-destructive/50 text-destructive hover:bg-destructive/10"
+              onClick={() => {
+                // Quick hack: reset status to awaiting_transcript so it can be transcribed
+                onStartTranscription(project.id)
+              }}
+            >
+              <Mic className="size-3.5" />
+              Retry Transcription
+            </Button>
+          </div>
+        )}
+
         {project.status === 'awaiting_transcript' && onStartTranscription && (
           <div
             onClick={(e) => e.stopPropagation()}
@@ -420,18 +489,18 @@ function ProjectCard({
 
 function EmptyState({ hasFilter }: { hasFilter: boolean }) {
   return (
-    <div className="col-span-full flex flex-col items-center justify-center gap-4 py-24 text-center">
-      <div className="flex size-16 items-center justify-center rounded-2xl bg-muted">
-        <FileVideo className="size-8 text-muted-foreground" />
+    <div className="col-span-full flex flex-col items-center justify-center gap-5 py-32 text-center animate-in fade-in zoom-in-95 duration-500">
+      <div className="flex size-20 items-center justify-center rounded-3xl bg-muted/50 shadow-inner">
+        <FileVideo className="size-10 text-muted-foreground/60" />
       </div>
-      <div>
-        <p className="font-semibold text-foreground">
-          {hasFilter ? 'No matching projects' : 'No projects yet'}
+      <div className="max-w-sm">
+        <p className="text-lg font-semibold text-foreground tracking-tight">
+          {hasFilter ? 'No matching projects found' : 'Your library is empty'}
         </p>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
           {hasFilter
-            ? 'Try adjusting your search or filter.'
-            : 'Upload a video, then start transcription from the library when you are ready.'}
+            ? 'Try adjusting your search query or status filter to find what you are looking for.'
+            : 'Upload your first video to get started. You can transcribe it, edit the text, and add overlays.'}
         </p>
       </div>
     </div>
@@ -576,7 +645,29 @@ function LibraryPageContent() {
     media: VideoProject[]
   } | null>(null)
   const [treeLoading, setTreeLoading] = useState(false)
-  const [browseFilter, setBrowseFilter] = useState<BrowseFilter>({ mode: 'all' })
+  const [browseFilter, setBrowseFilter] = useState<BrowseFilter>(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search)
+      const folderId = urlParams.get('folder')
+      if (folderId) {
+        return { mode: 'folder', folderId: folderId === 'root' ? null : folderId }
+      }
+    }
+    return { mode: 'all' }
+  })
+
+  // Update URL when browseFilter changes
+  useEffect(() => {
+    if (!wpId) return
+    const url = new URL(window.location.href)
+    if (browseFilter.mode === 'folder') {
+      url.searchParams.set('folder', browseFilter.folderId ?? 'root')
+    } else {
+      url.searchParams.delete('folder')
+    }
+    window.history.replaceState({}, '', url.toString())
+  }, [browseFilter, wpId])
+
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null)
@@ -613,6 +704,7 @@ function LibraryPageContent() {
   const [maxSpeakers, setMaxSpeakers] = useState<string>('')
   const [knownSpeakers, setKnownSpeakers] = useState<string>('')
   const [redactPii, setRedactPii] = useState(false)
+  const [autoTranscribe, setAutoTranscribe] = useState(false)
 
   const refetchTree = useCallback(async () => {
     if (!wpId) return
@@ -643,7 +735,7 @@ function LibraryPageContent() {
       }
       if (transcriptionBusyRef.current) return
       const proj = tree?.media.find((p) => p.id === projectId)
-      if (!proj || proj.status !== 'awaiting_transcript') {
+      if (!proj || (proj.status !== 'awaiting_transcript' && !(proj.status === 'error' && proj.fileUrl))) {
         toast.error('That file is not waiting for transcription.')
         return
       }
@@ -1117,28 +1209,51 @@ function LibraryPageContent() {
     }
   }, [wpId, router])
 
-  const handleFile = useCallback(
+  // Background polling for stuck/ongoing jobs
+  useEffect(() => {
+    if (!tree || !wpId) return
+    const hasBusy = tree.media.some(m => m.status === 'uploading' || m.status === 'transcribing')
+    if (!hasBusy) return
+
+    const interval = setInterval(() => {
+      void refetchTree()
+    }, 10000)
+    return () => clearInterval(interval)
+  }, [tree, wpId, refetchTree])
+
+  const activeUploadsRef = useRef<Map<string, UploadHandle>>(new Map())
+
+  const cancelUpload = useCallback(async (id: string) => {
+    const xhr = activeUploadsRef.current.get(id)
+    if (xhr) {
+      xhr.abort()
+      activeUploadsRef.current.delete(id)
+    }
+    
+    // Remove from local state
+    dispatch({ type: 'DELETE_PROJECT', id })
+    setTree((prev) => {
+      if (!prev) return prev
+      return { ...prev, media: prev.media.filter((m) => m.id !== id) }
+    })
+
+    // Try to delete from DB
+    try {
+      await fetch(`/api/projects/${id}`, { method: 'DELETE' })
+    } catch (e) {
+      console.error('Failed to delete cancelled project from db', e)
+    }
+  }, [dispatch])
+
+  const processSingleFile = useCallback(
     async (file: File) => {
-      if (!wpId) {
-        toast.error('Open or create a workspace before uploading.')
-        return
-      }
-      if (myMembership?.role === 'viewer') {
-        toast.error('Viewers cannot upload media.')
-        return
-      }
-      if (!file.type.startsWith('video/')) {
-        toast.error('Please upload a video file.')
-        return
-      }
+      if (!wpId) return
 
       const targetFolderId = browseFilter.mode === 'folder' ? browseFilter.folderId : null
 
       const id = `proj-${crypto.randomUUID()}`
       const originalKey = buildOriginalUploadKey(wpId, id, file.name)
       const objectUrl = URL.createObjectURL(file)
-
-      toast.info('Preparing upload...')
 
       // Start presign in parallel
       const presignPromise = fetch('/api/upload', {
@@ -1148,13 +1263,14 @@ function LibraryPageContent() {
           workspaceProjectId: wpId,
           filename: originalKey,
           contentType: file.type,
+          fileSize: file.size,
         }),
       }).then(async (res) => {
         if (!res.ok) {
           const msg = await errorMessageFromResponse(res, 'Failed to get upload URL.')
           throw new Error(msg)
         }
-        return res.json() as Promise<{ signedUrl: string }>
+        return res.json() as Promise<UploadPlan>
       })
 
       // Initialize video element for metadata & thumbnail
@@ -1221,7 +1337,7 @@ function LibraryPageContent() {
         video.onerror = () => finish(60000, thumb)
       })
 
-      let presignData: { signedUrl: string }
+      let presignData: UploadPlan
       try {
         presignData = await presignPromise
       } catch (e) {
@@ -1232,14 +1348,40 @@ function LibraryPageContent() {
         )
         return
       }
-      const { signedUrl } = presignData
-
       const clientCapture = buildClientMediaCapture(
         file,
         videoWidth > 0 && videoHeight > 0
           ? { videoWidth, videoHeight, durationMs: duration }
           : undefined,
       )
+
+      const updateUploadProgress = (loaded: number, total: number, uploadStartedAt: number) => {
+        if (!Number.isFinite(total) || total <= 0) return
+        const elapsedSec = Math.max((performance.now() - uploadStartedAt) / 1000, 0.05)
+        const speedBps = loaded / elapsedSec
+        const percent = Math.round((loaded / total) * 40) + 10 // 10% to 50%
+        const uploadProgress = {
+          loaded,
+          total,
+          speedBps,
+        }
+        dispatch({
+          type: 'UPDATE_PROJECT',
+          id,
+          updates: { transcriptionProgress: percent, uploadProgress, mediaStep: 'upload' },
+        })
+        setTree((prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            media: prev.media.map((m) =>
+              m.id === id
+                ? { ...m, transcriptionProgress: percent, uploadProgress, mediaStep: 'upload' }
+                : m,
+            ),
+          }
+        })
+      }
 
       const newProject: VideoProject = {
         id,
@@ -1286,7 +1428,6 @@ function LibraryPageContent() {
       }
 
       try {
-        // 1. We already presigned upload to immutable original key (vault)
         dispatch({
           type: 'UPDATE_PROJECT',
           id,
@@ -1310,62 +1451,153 @@ function LibraryPageContent() {
           body: JSON.stringify({ status: 'uploading', transcriptionProgress: 10 }),
         })
 
-        toast.info('Uploading media to evidence vault...')
+        const uploadStartedAt = performance.now()
 
-        // 2. Upload file directly to object storage (presigned PUT)
-        // Using XMLHttpRequest for progress, speed, and ETA
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest()
-          xhr.open('PUT', signedUrl)
-          xhr.setRequestHeader('Content-Type', file.type)
-          const uploadStartedAt = performance.now()
+        if (presignData.uploadType === 'single') {
+          await new Promise<void>((resolve, reject) => {
+            const xhr = new XMLHttpRequest()
+            activeUploadsRef.current.set(id, xhr)
 
-          xhr.upload.onprogress = (e) => {
-            if (!e.lengthComputable || e.total <= 0) return
-            const elapsedSec = Math.max((performance.now() - uploadStartedAt) / 1000, 0.05)
-            const speedBps = e.loaded / elapsedSec
-            const percent = Math.round((e.loaded / e.total) * 40) + 10 // 10% to 50%
-            const uploadProgress = {
-              loaded: e.loaded,
-              total: e.total,
-              speedBps,
+            xhr.open('PUT', presignData.signedUrl)
+            xhr.setRequestHeader('Content-Type', file.type)
+
+            xhr.upload.onprogress = (e) => {
+              if (!e.lengthComputable || e.total <= 0) return
+              updateUploadProgress(e.loaded, e.total, uploadStartedAt)
             }
-            dispatch({
-              type: 'UPDATE_PROJECT',
-              id,
-              updates: { transcriptionProgress: percent, uploadProgress, mediaStep: 'upload' },
-            })
-            setTree((prev) => {
-              if (!prev) return prev
-              return {
-                ...prev,
-                media: prev.media.map((m) =>
-                  m.id === id
-                    ? { ...m, transcriptionProgress: percent, uploadProgress, mediaStep: 'upload' }
-                    : m,
-                ),
+
+            xhr.onload = () => {
+              activeUploadsRef.current.delete(id)
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve()
+              } else {
+                reject(
+                  new Error(
+                    xhr.status
+                      ? `Upload to storage failed (HTTP ${xhr.status}). Check file size and try again.`
+                      : 'Upload to storage was rejected. Try again.',
+                  ),
+                )
               }
-            })
-          }
-
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              resolve()
-            } else {
-              reject(
-                new Error(
-                  xhr.status
-                    ? `Upload to storage failed (HTTP ${xhr.status}). Check file size and try again.`
-                    : 'Upload to storage was rejected. Try again.',
-                ),
-              )
             }
-          }
 
-          xhr.onerror = () =>
-            reject(new Error('Network error during upload. Check your connection and try again.'))
-          xhr.send(file)
-        })
+            xhr.onerror = () => {
+              activeUploadsRef.current.delete(id)
+              reject(new Error('Network error during upload. Check your connection and try again.'))
+            }
+
+            xhr.onabort = () => {
+              activeUploadsRef.current.delete(id)
+              reject(new Error('Upload cancelled.'))
+            }
+
+            xhr.send(file)
+          })
+        } else {
+          let currentXhr: XMLHttpRequest | null = null
+          let cancelled = false
+          let completed = false
+          const uploadedParts: Array<{ ETag: string; PartNumber: number }> = []
+
+          activeUploadsRef.current.set(id, {
+            abort: () => {
+              cancelled = true
+              currentXhr?.abort()
+            },
+          })
+
+          try {
+            let uploadedBytes = 0
+
+            for (const part of presignData.parts) {
+              if (cancelled) throw new Error('Upload cancelled.')
+
+              const start = (part.partNumber - 1) * presignData.partSize
+              const end = Math.min(start + presignData.partSize, file.size)
+              const chunk = file.slice(start, end)
+
+              const etag = await new Promise<string>((resolve, reject) => {
+                const xhr = new XMLHttpRequest()
+                currentXhr = xhr
+                xhr.open('PUT', part.signedUrl)
+                xhr.setRequestHeader('Content-Type', file.type)
+
+                xhr.upload.onprogress = (e) => {
+                  const loaded = uploadedBytes + (e.lengthComputable ? e.loaded : 0)
+                  updateUploadProgress(loaded, file.size, uploadStartedAt)
+                }
+
+                xhr.onload = () => {
+                  if (xhr.status < 200 || xhr.status >= 300) {
+                    reject(
+                      new Error(
+                        xhr.status
+                          ? `Multipart upload failed on part ${part.partNumber} (HTTP ${xhr.status}).`
+                          : `Multipart upload was rejected on part ${part.partNumber}.`,
+                      ),
+                    )
+                    return
+                  }
+
+                  const etag = xhr.getResponseHeader('ETag')
+                  if (!etag) {
+                    reject(new Error(`Storage did not return an ETag for part ${part.partNumber}.`))
+                    return
+                  }
+
+                  resolve(etag)
+                }
+
+                xhr.onerror = () =>
+                  reject(new Error(`Network error during multipart upload (part ${part.partNumber}).`))
+                xhr.onabort = () => reject(new Error('Upload cancelled.'))
+                xhr.send(chunk)
+              })
+
+              uploadedBytes = end
+              updateUploadProgress(uploadedBytes, file.size, uploadStartedAt)
+              uploadedParts.push({ ETag: etag, PartNumber: part.partNumber })
+            }
+
+            const completeRes = await fetch('/api/upload/multipart', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'complete',
+                workspaceProjectId: wpId,
+                filename: originalKey,
+                uploadId: presignData.uploadId,
+                parts: uploadedParts,
+              }),
+            })
+            if (!completeRes.ok) {
+              const msg = await errorMessageFromResponse(
+                completeRes,
+                'Could not finalize the multipart upload.',
+              )
+              throw new Error(msg)
+            }
+
+            completed = true
+          } catch (error) {
+            if (!completed) {
+              await fetch('/api/upload/multipart', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'abort',
+                  workspaceProjectId: wpId,
+                  filename: originalKey,
+                  uploadId: presignData.uploadId,
+                }),
+              }).catch(() => {})
+            }
+            throw error
+          } finally {
+            currentXhr = null
+            activeUploadsRef.current.delete(id)
+          }
+        }
 
         dispatch({
           type: 'UPDATE_PROJECT',
@@ -1395,8 +1627,6 @@ function LibraryPageContent() {
           }
         })
 
-        toast.info('Preparing editor MP4 (hash + transcode)...')
-
         const prepRes = await fetch(`/api/projects/${id}/prepare-edit-asset`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1409,6 +1639,8 @@ function LibraryPageContent() {
           sha256Hash?: string
           duration?: number
           mediaMetadata?: StoredMediaMetadata
+          playbackUrlRefreshedAt?: number | null
+          playbackUrlExpiresAt?: number | null
         } | null
         if (!prepRes.ok || !prepBody?.fileUrl) {
           const fromApi =
@@ -1429,12 +1661,16 @@ function LibraryPageContent() {
           sha256Hash,
           duration: probeDuration,
           mediaMetadata,
+          playbackUrlRefreshedAt,
+          playbackUrlExpiresAt,
         } = prepBody as {
           fileUrl: string
           originalFileUrl: string
           sha256Hash: string
           duration: number
           mediaMetadata: StoredMediaMetadata
+          playbackUrlRefreshedAt?: number | null
+          playbackUrlExpiresAt?: number | null
         }
 
         dispatch({
@@ -1447,6 +1683,8 @@ function LibraryPageContent() {
             sha256Hash,
             duration: probeDuration,
             mediaMetadata,
+            playbackUrlRefreshedAt,
+            playbackUrlExpiresAt,
             transcriptionProgress: 0,
             uploadProgress: undefined,
             mediaStep: undefined,
@@ -1467,6 +1705,8 @@ function LibraryPageContent() {
                     sha256Hash,
                     duration: probeDuration,
                     mediaMetadata,
+                    playbackUrlRefreshedAt,
+                    playbackUrlExpiresAt,
                     transcriptionProgress: 0,
                     uploadProgress: undefined,
                     mediaStep: undefined,
@@ -1478,12 +1718,22 @@ function LibraryPageContent() {
         })
 
         await refetchTree()
-        toast.success(
-          'Upload complete. Adjust Transcription Settings if needed, then tap Transcribe on this file.',
-        )
+        
+        if (autoTranscribe) {
+          toast.success('Upload complete. Starting transcription automatically...')
+          startTranscriptionForProject(id)
+        } else {
+          toast.success(
+            'Upload complete. Adjust Transcription Settings if needed, then tap Transcribe on this file.',
+          )
+        }
 
       } catch (err) {
         console.error('Upload error:', err)
+        if (err instanceof Error && err.message === 'Upload cancelled.') {
+          // Handled by cancelUpload
+          return
+        }
         const message =
           err instanceof Error
             ? err.message
@@ -1512,30 +1762,62 @@ function LibraryPageContent() {
         toast.error('Upload failed', { description: message, duration: 10_000 })
       }
     },
-    [dispatch, wpId, browseFilter, refetchTree, myMembership],
+    [dispatch, wpId, browseFilter, refetchTree, autoTranscribe, startTranscriptionForProject],
+  )
+
+  const handleFiles = useCallback(
+    async (files: File[]) => {
+      if (!wpId) {
+        toast.error('Open or create a workspace before uploading.')
+        return
+      }
+      if (myMembership?.role === 'viewer') {
+        toast.error('Viewers cannot upload media.')
+        return
+      }
+
+      const validFiles = files.filter(f => f.type.startsWith('video/'))
+      if (validFiles.length === 0) {
+        toast.error('Please upload video files only.')
+        return
+      }
+      if (validFiles.length < files.length) {
+        toast.warning(`Skipped ${files.length - validFiles.length} non-video files.`)
+      }
+
+      if (validFiles.length > 1) {
+        toast.info(`Preparing ${validFiles.length} uploads...`)
+      } else {
+        toast.info('Preparing upload...')
+      }
+
+      // Process files concurrently
+      validFiles.forEach(file => {
+        void processSingleFile(file)
+      })
+    },
+    [wpId, myMembership?.role, processSingleFile],
   )
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
       setIsDragOver(false)
-      if (myMembership?.role === 'viewer') {
-        toast.error('Viewers cannot upload media.')
-        return
+      if (e.dataTransfer.files?.length > 0) {
+        handleFiles(Array.from(e.dataTransfer.files))
       }
-      const file = e.dataTransfer.files[0]
-      if (file) handleFile(file)
     },
-    [handleFile, myMembership?.role],
+    [handleFiles],
   )
 
   const onFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]
-      if (file) handleFile(file)
+      if (e.target.files?.length) {
+        handleFiles(Array.from(e.target.files))
+      }
       e.target.value = ''
     },
-    [handleFile],
+    [handleFiles],
   )
 
   const handleOpen = useCallback(
@@ -1733,6 +2015,13 @@ function LibraryPageContent() {
                 <span className="sm:hidden">Upload</span>
               </Button>
             )}
+            <Show when="signed-out">
+              <SignInButton />
+              <SignUpButton />
+            </Show>
+            <Show when="signed-in">
+              <UserButton />
+            </Show>
           </div>
         </div>
       </header>
@@ -1940,10 +2229,10 @@ function LibraryPageContent() {
         {/* Upload zone */}
         <div
           className={cn(
-            'mb-8 flex flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed p-10 text-center transition-all duration-200',
+            'mb-8 flex flex-col items-center justify-center gap-5 rounded-2xl border-2 border-dashed p-12 text-center transition-all duration-300 ease-out',
             isDragOver
-              ? 'border-brand bg-brand/5 scale-[1.01]'
-              : 'border-border bg-muted/30 hover:border-muted-foreground/30 hover:bg-muted/50',
+              ? 'border-brand bg-brand/10 scale-[1.02] shadow-lg shadow-brand/5'
+              : 'border-border bg-muted/20 hover:border-brand/40 hover:bg-muted/40',
           )}
           onDragOver={(e) => {
             e.preventDefault()
@@ -1953,20 +2242,20 @@ function LibraryPageContent() {
           onDrop={viewerLocked ? (e) => { e.preventDefault(); setIsDragOver(false) } : onDrop}
         >
           <div className={cn(
-            'flex size-14 items-center justify-center rounded-2xl transition-colors',
-            isDragOver ? 'bg-brand/20' : 'bg-muted',
+            'flex size-16 items-center justify-center rounded-3xl transition-all duration-300 shadow-sm',
+            isDragOver ? 'bg-brand text-brand-foreground shadow-brand/20 scale-110' : 'bg-background border text-muted-foreground',
           )}>
-            <UploadCloud className={cn('size-7', isDragOver ? 'text-brand' : 'text-muted-foreground')} />
+            <UploadCloud className={cn('size-8', isDragOver ? 'animate-bounce' : '')} />
           </div>
-          <div>
-            <p className="font-semibold">
-              {isDragOver ? 'Drop to upload' : 'Drag & drop your video here'}
+          <div className="space-y-1.5">
+            <p className="text-lg font-semibold tracking-tight">
+              {isDragOver ? 'Drop videos to upload' : 'Drag & drop your videos here'}
             </p>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               or{' '}
               <button
                 type="button"
-                className="font-medium text-brand underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+                className="font-medium text-brand underline-offset-4 hover:underline disabled:pointer-events-none disabled:opacity-50 transition-all"
                 disabled={viewerLocked}
                 onClick={() => fileInputRef.current?.click()}
               >
@@ -1975,9 +2264,9 @@ function LibraryPageContent() {
               {' '}&mdash; MP4, MOV, WebM, AVI supported
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-1.5 text-xs text-muted-foreground">
-            <Sparkles className="size-3 text-brand" />
-            AssemblyAI transcription when you choose — plus AI editing assistant in the editor
+          <div className="flex items-center gap-2.5 rounded-full border bg-background/50 px-4 py-2 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm">
+            <Sparkles className="size-3.5 text-brand" />
+            AssemblyAI transcription + AI editing assistant
           </div>
         </div>
 
@@ -2147,6 +2436,18 @@ function LibraryPageContent() {
                         <Switch checked={redactPii} onCheckedChange={setRedactPii} />
                       </div>
                     </div>
+
+                    <div className="flex flex-col gap-4 rounded-xl border border-brand/20 bg-brand/5 p-4 transition-colors">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-xs font-medium">Auto-transcribe after upload</Label>
+                          <p className="text-[10px] text-muted-foreground leading-tight">
+                            Automatically start transcription using these settings when a new video finishes uploading.
+                          </p>
+                        </div>
+                        <Switch checked={autoTranscribe} onCheckedChange={setAutoTranscribe} />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </AccordionContent>
@@ -2200,6 +2501,7 @@ function LibraryPageContent() {
                 onMoveToFolder={viewerLocked ? undefined : moveMediaToFolder}
                 onRenameTitle={viewerLocked ? undefined : renameMediaProject}
                 onStartTranscription={viewerLocked ? undefined : startTranscriptionForProject}
+                onCancelUpload={viewerLocked ? undefined : cancelUpload}
               />
             ))
           )}
@@ -2212,6 +2514,7 @@ function LibraryPageContent() {
         ref={fileInputRef}
         type="file"
         accept="video/*"
+        multiple
         className="hidden"
         onChange={onFileChange}
       />

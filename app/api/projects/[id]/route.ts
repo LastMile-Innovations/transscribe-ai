@@ -2,22 +2,11 @@ import { NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { findFolderById } from '@/lib/db/queries'
+import type { ProjectStatus } from '@/lib/db/schema'
 import { projects } from '@/lib/db/schema'
-import type { VideoProject } from '@/lib/types'
+import type { StoredMediaMetadata } from '@/lib/media-metadata'
+import { patchProjectBodySchema } from '@/lib/validation/projects'
 import { requireProjectAccessForRoute } from '@/lib/workspace-access'
-
-type PatchBody = Partial<{
-  fileUrl: string | null
-  originalFileUrl: string | null
-  sha256Hash: string | null
-  mediaMetadata: VideoProject['mediaMetadata']
-  status: VideoProject['status']
-  transcriptionProgress: number
-  duration: number
-  title: string
-  thumbnailUrl: string
-  folderId: string | null
-}>
 
 export async function PATCH(
   request: Request,
@@ -28,23 +17,22 @@ export async function PATCH(
     const access = await requireProjectAccessForRoute(id, 'editor')
     if (access instanceof NextResponse) return access
 
-    const body = (await request.json()) as PatchBody
-
-    let titlePatch: string | undefined
-    if (body.title !== undefined) {
-      const t = typeof body.title === 'string' ? body.title.trim() : ''
-      if (!t) {
-        return NextResponse.json({ error: 'title required' }, { status: 400 })
-      }
-      titlePatch = t
+    const raw = await request.json()
+    const parsed = patchProjectBodySchema.safeParse(raw)
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: 'Invalid patch payload', issues: parsed.error.flatten() },
+        { status: 400 },
+      )
     }
+    const body = parsed.data
 
     const patch: Partial<{
       fileUrl: string | null
       originalFileUrl: string | null
       sha256Hash: string | null
-      mediaMetadata: VideoProject['mediaMetadata']
-      status: VideoProject['status']
+      mediaMetadata: StoredMediaMetadata | null
+      status: ProjectStatus
       transcriptionProgress: number
       duration: number
       title: string
@@ -54,13 +42,15 @@ export async function PATCH(
       ...(body.fileUrl !== undefined ? { fileUrl: body.fileUrl } : {}),
       ...(body.originalFileUrl !== undefined ? { originalFileUrl: body.originalFileUrl } : {}),
       ...(body.sha256Hash !== undefined ? { sha256Hash: body.sha256Hash } : {}),
-      ...(body.mediaMetadata !== undefined ? { mediaMetadata: body.mediaMetadata } : {}),
+      ...(body.mediaMetadata !== undefined
+        ? { mediaMetadata: body.mediaMetadata as StoredMediaMetadata | null }
+        : {}),
       ...(body.status !== undefined ? { status: body.status } : {}),
       ...(body.transcriptionProgress !== undefined
         ? { transcriptionProgress: body.transcriptionProgress }
         : {}),
       ...(body.duration !== undefined ? { duration: body.duration } : {}),
-      ...(titlePatch !== undefined ? { title: titlePatch } : {}),
+      ...(body.title !== undefined ? { title: body.title } : {}),
       ...(body.thumbnailUrl !== undefined ? { thumbnailUrl: body.thumbnailUrl } : {}),
       ...(body.folderId !== undefined ? { folderId: body.folderId } : {}),
     }
@@ -85,6 +75,23 @@ export async function PATCH(
     return NextResponse.json(row)
   } catch (error) {
     console.error('Error patching project:', error)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params
+    const access = await requireProjectAccessForRoute(id, 'editor')
+    if (access instanceof NextResponse) return access
+
+    await db.delete(projects).where(eq(projects.id, id))
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Error deleting project:', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

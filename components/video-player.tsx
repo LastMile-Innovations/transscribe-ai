@@ -29,6 +29,8 @@ function waveBarHeight(index: number, total: number): number {
   return Math.max(0.15, Math.min(1, x * 0.6 + y * 0.4))
 }
 
+const PLAYBACK_URL_REFRESH_BUFFER_MS = 5 * 60 * 1000
+
 export function VideoPlayer() {
   const { state, dispatch } = useApp()
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -36,6 +38,8 @@ export function VideoPlayer() {
   const [muted, setMuted] = useState(false)
   const [showControls, setShowControls] = useState(true)
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const refreshInFlightRef = useRef<Promise<string | null> | null>(null)
+  const playbackRetryRef = useRef(false)
 
   const project = state.projects.find((p) => p.id === state.activeProjectId)
   const duration = project?.duration ?? 0
@@ -44,18 +48,98 @@ export function VideoPlayer() {
   const trimRange = state.trimRange
   const overlays = state.overlays
 
+  const refreshPlaybackUrl = useCallback(
+    async (force = false): Promise<string | null> => {
+      if (!project) return null
+
+      const hasFreshUrl =
+        project.fileUrl &&
+        (project.playbackUrlExpiresAt == null ||
+          project.playbackUrlExpiresAt - Date.now() > PLAYBACK_URL_REFRESH_BUFFER_MS)
+
+      if (!force && hasFreshUrl) return project.fileUrl
+
+      if (refreshInFlightRef.current) return refreshInFlightRef.current
+
+      const task = fetch(`/api/projects/${project.id}/playback-url`)
+        .then(async (res) => {
+          if (!res.ok) throw new Error('Could not refresh playback URL.')
+          return res.json() as Promise<{
+            fileUrl: string | null
+            originalFileUrl: string | null
+            playbackUrlRefreshedAt?: number | null
+            playbackUrlExpiresAt?: number | null
+          }>
+        })
+        .then((data) => {
+          dispatch({
+            type: 'UPDATE_PROJECT',
+            id: project.id,
+            updates: {
+              fileUrl: data.fileUrl,
+              originalFileUrl: data.originalFileUrl,
+              playbackUrlRefreshedAt: data.playbackUrlRefreshedAt ?? Date.now(),
+              playbackUrlExpiresAt: data.playbackUrlExpiresAt ?? null,
+            },
+          })
+          return data.fileUrl
+        })
+        .finally(() => {
+          refreshInFlightRef.current = null
+        })
+
+      refreshInFlightRef.current = task
+      return task
+    },
+    [dispatch, project],
+  )
+
+  // Global seek listener
+  useEffect(() => {
+    const handleSeek = (e: Event) => {
+      const ce = e as CustomEvent<{ timeMs: number }>
+      if (videoRef.current) {
+        videoRef.current.currentTime = ce.detail.timeMs / 1000
+      }
+    }
+    window.addEventListener('app:seek', handleSeek)
+    return () => window.removeEventListener('app:seek', handleSeek)
+  }, [])
+
   // Sync play/pause state with video element
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
-    if (isPlaying) {
-      video.play().catch(() => {
-        dispatch({ type: 'SET_PLAYING', isPlaying: false })
-      })
-    } else {
+    if (!isPlaying) {
       video.pause()
+      return
     }
-  }, [isPlaying, dispatch])
+
+    let cancelled = false
+
+    async function startPlayback() {
+      try {
+        const refreshedUrl = await refreshPlaybackUrl(false)
+        const currentVideo = videoRef.current
+        if (!currentVideo) return
+        if (cancelled) return
+        if (refreshedUrl && project?.fileUrl && refreshedUrl !== project.fileUrl) {
+          return
+        }
+        await currentVideo.play()
+      } catch {
+        if (!cancelled) {
+          dispatch({ type: 'SET_PLAYING', isPlaying: false })
+        }
+      }
+    }
+
+    void startPlayback()
+
+    return () => {
+      cancelled = true
+    }
+  }, [dispatch, isPlaying, project?.fileUrl, project?.id, refreshPlaybackUrl])
 
   // Time update listener
   useEffect(() => {
@@ -155,6 +239,47 @@ export function VideoPlayer() {
     }
   }
 
+  const handleVideoError = useCallback(() => {
+    if (!project || playbackRetryRef.current) {
+      dispatch({ type: 'SET_PLAYING', isPlaying: false })
+      return
+    }
+
+    playbackRetryRef.current = true
+    const resumeTimeSec = currentTime / 1000
+    const shouldResume = isPlaying
+    const video = videoRef.current
+
+    void refreshPlaybackUrl(true)
+      .then((nextUrl) => {
+        if (!video || !nextUrl) {
+          dispatch({ type: 'SET_PLAYING', isPlaying: false })
+          return
+        }
+
+        const restorePlayback = () => {
+          if (resumeTimeSec > 0) {
+            try {
+              video.currentTime = resumeTimeSec
+            } catch {
+              /* ignore restore failure */
+            }
+          }
+          if (shouldResume) {
+            video.play().catch(() => {
+              dispatch({ type: 'SET_PLAYING', isPlaying: false })
+            })
+          }
+        }
+
+        video.addEventListener('loadedmetadata', restorePlayback, { once: true })
+        video.load()
+      })
+      .catch(() => {
+        dispatch({ type: 'SET_PLAYING', isPlaying: false })
+      })
+  }, [currentTime, dispatch, isPlaying, project, refreshPlaybackUrl])
+
   // Visible overlays at current time
   const visibleOverlays = overlays.filter(
     (o) => currentTime >= o.startTime && currentTime <= o.endTime,
@@ -181,6 +306,10 @@ export function VideoPlayer() {
             src={project.fileUrl}
             className="size-full object-contain"
             onClick={togglePlay}
+            onError={handleVideoError}
+            onLoadedData={() => {
+              playbackRetryRef.current = false
+            }}
             playsInline
           />
         ) : (
@@ -290,12 +419,12 @@ export function VideoPlayer() {
 
         {/* Controls row */}
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-black/40 rounded-full p-1 backdrop-blur-md border border-white/10">
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={skipBack}
-              className="text-white/70 hover:bg-white/10 hover:text-white"
+              className="size-8 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
             >
               <SkipBack className="size-4" />
             </Button>
@@ -303,37 +432,37 @@ export function VideoPlayer() {
             <Button
               size="icon"
               onClick={togglePlay}
-              className="size-9 rounded-full bg-brand text-brand-foreground hover:bg-brand/90"
+              className="size-10 rounded-full bg-brand text-brand-foreground hover:bg-brand/90 hover:scale-105 transition-transform shadow-lg shadow-brand/20"
             >
-              {isPlaying ? <Pause className="size-4" /> : <Play className="size-4 translate-x-px" />}
+              {isPlaying ? <Pause className="size-5" /> : <Play className="size-5 translate-x-0.5" />}
             </Button>
 
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={skipForward}
-              className="text-white/70 hover:bg-white/10 hover:text-white"
+              className="size-8 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
             >
               <SkipForward className="size-4" />
             </Button>
-
-            <span className="font-mono text-xs text-white/60">
-              {formatTime(currentTime)}{' '}
-              <span className="text-white/30">/</span>{' '}
-              {formatTime(duration)}
-            </span>
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-2 font-mono text-xs font-medium tracking-wider text-white/80">
+            {formatTime(currentTime)}{' '}
+            <span className="text-white/30 px-1">/</span>{' '}
+            {formatTime(duration)}
+          </div>
+
+          <div className="ml-auto flex items-center gap-1.5 bg-black/40 rounded-full p-1 backdrop-blur-md border border-white/10">
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={() => setMuted(!muted)}
-              className="text-white/70 hover:bg-white/10 hover:text-white"
+              className="size-8 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
             >
               {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
             </Button>
-            <div className="w-20">
+            <div className="w-20 pr-3">
               <Slider
                 min={0}
                 max={100}
@@ -343,14 +472,15 @@ export function VideoPlayer() {
                   setVolume(v)
                   setMuted(v === 0)
                 }}
-                className="[&_[data-slot=slider-range]]:bg-white/60 [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-white/60"
+                className="[&_[data-slot=slider-range]]:bg-white [&_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-thumb]]:border-white hover:[&_[data-slot=slider-thumb]]:scale-110 transition-transform"
               />
             </div>
+            <div className="w-px h-4 bg-white/20 mx-1" />
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={fullscreen}
-              className="text-white/70 hover:bg-white/10 hover:text-white"
+              className="size-8 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
             >
               <Maximize className="size-4" />
             </Button>

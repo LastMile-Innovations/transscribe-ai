@@ -14,6 +14,7 @@
     "db:test": "node scripts/db-connection-check.mjs",
     "storage:test": "node scripts/storage-connection-check.mjs",
     "storage:create-bucket": "node scripts/create-minio-bucket.mjs",
+    "storage:set-lifecycle": "node scripts/configure-minio-lifecycle.mjs",
     "db:backfill-workspace-owners": "node scripts/backfill-workspace-owners.mjs"
   },
   "dependencies": {

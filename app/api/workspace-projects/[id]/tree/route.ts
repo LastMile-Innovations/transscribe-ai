@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getWorkspaceTree } from '@/lib/db/queries'
+import { withAccessibleMediaUrls } from '@/lib/s3-storage'
 import { requireWorkspaceAccessForRoute } from '@/lib/workspace-access'
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -13,10 +14,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
     }
 
+    const media = await Promise.all(tree.media.map((project) => withAccessibleMediaUrls(project)))
+
     return NextResponse.json({
       workspace: tree.workspace,
       folders: tree.folders,
-      media: tree.media,
+      media,
     })
   } catch (error) {
     console.error('Error loading workspace tree:', error)

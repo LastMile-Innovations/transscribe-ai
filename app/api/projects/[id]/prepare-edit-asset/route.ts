@@ -10,7 +10,14 @@ import { ffprobeFullReport, transcodeOrRemuxToMp4 } from '@/lib/ffmpeg-transcode
 import { parseClientMediaCaptureFromJson } from '@/lib/client-media-capture'
 import { buildStoredMediaMetadata } from '@/lib/media-metadata'
 import { buildEditObjectKey, isValidOriginalObjectKey } from '@/lib/media-keys'
-import { downloadObjectToFileAndHash, publicObjectUrl, uploadFileToObjectKey } from '@/lib/s3-storage'
+import {
+  browserObjectUrl,
+  browserObjectUrlExpiresInSec,
+  browserObjectUrlMode,
+  downloadObjectToFileAndHash,
+  publicObjectUrl,
+  uploadFileToObjectKey,
+} from '@/lib/s3-storage'
 import { requireProjectAccessForRoute } from '@/lib/workspace-access'
 
 export const maxDuration = 300
@@ -65,8 +72,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const editKey = buildEditObjectKey(proj.workspaceProjectId, projectId)
     await uploadFileToObjectKey(outputPath, editKey, 'video/mp4')
 
-    const originalFileUrl = publicObjectUrl(originalKey)
-    const fileUrl = publicObjectUrl(editKey)
+    const storedOriginalFileUrl = publicObjectUrl(originalKey)
+    const storedFileUrl = publicObjectUrl(editKey)
+    const [originalFileUrl, fileUrl] = await Promise.all([
+      browserObjectUrl(originalKey).catch(() => storedOriginalFileUrl),
+      browserObjectUrl(editKey).catch(() => storedFileUrl),
+    ])
+    const playbackUrlRefreshedAt = Date.now()
+    const playbackUrlExpiresAt =
+      browserObjectUrlMode() === 'presigned'
+        ? playbackUrlRefreshedAt + browserObjectUrlExpiresInSec() * 1000
+        : null
 
     const mediaMetadata = buildStoredMediaMetadata(
       originalKey,
@@ -83,9 +99,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const [row] = await db
       .update(projects)
       .set({
-        originalFileUrl,
+        originalFileUrl: storedOriginalFileUrl,
         sha256Hash: sha256,
-        fileUrl,
+        fileUrl: storedFileUrl,
         duration: nextDuration,
         mediaMetadata,
         status: 'awaiting_transcript',
@@ -105,6 +121,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       editKey,
       duration: nextDuration,
       mediaMetadata,
+      playbackUrlRefreshedAt,
+      playbackUrlExpiresAt,
     })
   } catch (e) {
     console.error('prepare-edit-asset:', e)

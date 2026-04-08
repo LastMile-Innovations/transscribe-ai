@@ -9,6 +9,7 @@ import {
   objectUrlUnreachableFromAssemblyAi,
   presignGetObject,
   publicObjectUrl,
+  transcriptionObjectUrlMode,
 } from '@/lib/s3-storage'
 
 export const maxDuration = 300
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
 
     const editKey = buildEditObjectKey(access.workspaceProjectId, projectId)
 
-    const urlMode = (process.env.MINIO_TRANSCRIPTION_URL_MODE || 'public').toLowerCase()
+    const urlMode = transcriptionObjectUrlMode()
     const presignExpires = Number(process.env.MINIO_TRANSCRIPTION_PRESIGN_EXPIRES_SEC) || 172800
 
     let resolvedAudioUrl: string | null = null

@@ -16,7 +16,15 @@ import {
   updateFolderName,
   updateWorkspaceProjectName,
 } from './db/queries'
-import { folders, projects, transcriptSegments, transcripts, textOverlays } from './db/schema'
+import {
+  folders,
+  projects,
+  type StoredTranscriptWord,
+  transcriptSegments,
+  transcripts,
+  textOverlays,
+} from './db/schema'
+import { withAccessibleMediaUrls } from './s3-storage'
 import type { TextOverlay, Transcript, TranscriptSummary, VideoProject } from './types'
 import {
   assertProjectAccess,
@@ -69,7 +77,7 @@ export async function getProjectData(projectId: string, transcriptId?: string | 
   const overlayRows = await db.select().from(textOverlays).where(eq(textOverlays.projectId, projectId))
 
   return {
-    project: projectRowToVideoProject(proj),
+    project: await withAccessibleMediaUrls(projectRowToVideoProject(proj)),
     transcript: transcriptData,
     overlays: overlayRows.map(textOverlayRowToOverlay),
   }
@@ -180,6 +188,52 @@ export async function updateSegmentAction(segmentId: string, updates: { text?: s
   await assertProjectAccess(projectId, 'editor')
 
   await db.update(transcriptSegments).set(updates).where(eq(transcriptSegments.id, segmentId))
+}
+
+export type NewTranscriptSegmentInput = {
+  id: string
+  start: number
+  end: number
+  text: string
+  speaker: string
+  confidence: number
+  words?: StoredTranscriptWord[] | null
+}
+
+export async function addSegmentAction(transcriptId: string, segment: NewTranscriptSegmentInput) {
+  const tRows = await db.select().from(transcripts).where(eq(transcripts.id, transcriptId)).limit(1)
+  if (tRows.length === 0) throw new Error('Transcript not found')
+  await assertProjectAccess(tRows[0].projectId, 'editor')
+
+  const words = segment.words === undefined ? null : segment.words
+
+  await db.insert(transcriptSegments).values({
+    id: segment.id,
+    transcriptId,
+    start: segment.start,
+    end: segment.end,
+    text: segment.text,
+    speaker: segment.speaker,
+    confidence: segment.confidence,
+    words,
+  })
+}
+
+export async function deleteSegmentAction(segmentId: string) {
+  const projectId = await findProjectIdForSegment(segmentId)
+  if (!projectId) throw new Error('Segment not found')
+  await assertProjectAccess(projectId, 'editor')
+
+  await db.delete(transcriptSegments).where(eq(transcriptSegments.id, segmentId))
+}
+
+export async function mergeSegmentsAction(id1: string, id2: string, mergedText: string, mergedEnd: number, mergedConfidence: number) {
+  const projectId = await findProjectIdForSegment(id1)
+  if (!projectId) throw new Error('Segment not found')
+  await assertProjectAccess(projectId, 'editor')
+
+  await db.update(transcriptSegments).set({ text: mergedText, end: mergedEnd, confidence: mergedConfidence }).where(eq(transcriptSegments.id, id1))
+  await db.delete(transcriptSegments).where(eq(transcriptSegments.id, id2))
 }
 
 export async function addOverlaysAction(projectId: string, overlaysPayload: TextOverlay[]) {

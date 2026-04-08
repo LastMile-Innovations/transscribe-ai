@@ -26,7 +26,7 @@ export interface VideoProject {
   status: ProjectStatus
   thumbnailUrl: string
   fileUrl: string | null
-  /** Public URL of the immutable original upload (same bytes as SHA-256). */
+  /** Browser-accessible URL of the immutable original upload (same bytes as SHA-256). */
   originalFileUrl?: string | null
   /** Lowercase hex SHA-256 of the original object in object storage. */
   sha256Hash?: string | null
@@ -43,6 +43,10 @@ export interface VideoProject {
     total: number
     speedBps: number
   }
+  /** Client-only timestamp (ms since epoch) for the last minted playback URL. */
+  playbackUrlRefreshedAt?: number | null
+  /** Client-only timestamp (ms since epoch) when the current playback URL is expected to expire. */
+  playbackUrlExpiresAt?: number | null
   workspaceProjectId: string
   folderId: string | null
   caseId?: string | null

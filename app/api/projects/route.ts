@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { desc, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { projects } from '@/lib/db/schema'
+import { withAccessibleMediaUrls } from '@/lib/s3-storage'
 import { requireWorkspaceAccessForRoute } from '@/lib/workspace-access'
 
 export async function GET(request: Request) {
@@ -19,7 +20,8 @@ export async function GET(request: Request) {
       .from(projects)
       .where(eq(projects.workspaceProjectId, workspaceProjectId))
       .orderBy(desc(projects.uploadedAt))
-    return NextResponse.json(rows)
+    const media = await Promise.all(rows.map((project) => withAccessibleMediaUrls(project)))
+    return NextResponse.json(media)
   } catch (error) {
     console.error('Error fetching projects:', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
