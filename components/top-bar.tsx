@@ -20,6 +20,9 @@ import {
   Menu,
   Bot,
   HelpCircle,
+  ChevronDown,
+  Clapperboard,
+  FileArchive,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -73,6 +76,16 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function canDownloadOriginalProject(project: VideoProject): boolean {
+  return Boolean(
+    project.mediaMetadata?.originalKey || project.originalFileUrl || project.sha256Hash,
+  )
+}
+
+function canDownloadEditedProject(project: VideoProject): boolean {
+  return Boolean(project.mediaMetadata?.editKey || project.fileUrl)
 }
 
 function formatTranscriptLabel(t: TranscriptSummary): string {
@@ -429,6 +442,18 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
     toast.success('SRT file exported.')
   }
 
+  const downloadVideo = (variant: 'original' | 'edit') => {
+    if (variant === 'original' && !canDownloadOriginalProject(project)) {
+      toast.error('Original file is not available yet.')
+      return
+    }
+    if (variant === 'edit' && !canDownloadEditedProject(project)) {
+      toast.error('Edited video is not available yet.')
+      return
+    }
+    window.location.assign(`/api/projects/${project.id}/download?variant=${variant}`)
+  }
+
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background/90 px-4 backdrop-blur-sm">
       <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -554,6 +579,45 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
           </TooltipTrigger>
           <TooltipContent>Includes latest unsaved changes</TooltipContent>
         </Tooltip>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="hidden h-8 gap-1 px-2 text-xs sm:flex"
+              title="Download original upload or edited MP4 from storage"
+            >
+              <Download className="size-4" />
+              Video
+              <ChevronDown className="size-3.5 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              Download video
+            </DropdownMenuLabel>
+            <DropdownMenuItem
+              disabled={!canDownloadOriginalProject(project)}
+              onSelect={(e) => {
+                e.preventDefault()
+                downloadVideo('original')
+              }}
+            >
+              <FileArchive className="mr-2 size-4" />
+              Original (unedited)
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!canDownloadEditedProject(project)}
+              onSelect={(e) => {
+                e.preventDefault()
+                downloadVideo('edit')
+              }}
+            >
+              <Clapperboard className="mr-2 size-4" />
+              Edited MP4
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button
           variant="outline"
           size="icon-sm"
@@ -643,6 +707,30 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
               <DropdownMenuItem onClick={exportSRT} disabled={!state.transcript}>
                 <Download className="mr-2 size-4" />
                 Export SRT
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                Download video
+              </DropdownMenuLabel>
+              <DropdownMenuItem
+                disabled={!canDownloadOriginalProject(project)}
+                onSelect={(e) => {
+                  e.preventDefault()
+                  downloadVideo('original')
+                }}
+              >
+                <FileArchive className="mr-2 size-4" />
+                Original (unedited)
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canDownloadEditedProject(project)}
+                onSelect={(e) => {
+                  e.preventDefault()
+                  downloadVideo('edit')
+                }}
+              >
+                <Clapperboard className="mr-2 size-4" />
+                Edited MP4
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setMediaInfoOpen(true)} disabled={!project.mediaMetadata}>
                 <Info className="mr-2 size-4" />
