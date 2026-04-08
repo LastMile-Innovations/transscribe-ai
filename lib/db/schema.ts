@@ -1,0 +1,200 @@
+import { relations } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import type { StoredMediaMetadata } from '@/lib/media-metadata'
+import {
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  primaryKey,
+  real,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core'
+
+export const projectStatusEnum = pgEnum('project_status', [
+  'uploading',
+  'transcribing',
+  'ready',
+  'error',
+])
+
+export const overlayFontWeightEnum = pgEnum('overlay_font_weight', ['normal', 'bold'])
+
+export const workspaceMemberRoleEnum = pgEnum('workspace_member_role', ['owner', 'editor', 'viewer'])
+
+export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number]
+export type OverlayFontWeight = (typeof overlayFontWeightEnum.enumValues)[number]
+export type WorkspaceMemberRole = (typeof workspaceMemberRoleEnum.enumValues)[number]
+
+export const workspaceProjects = pgTable('workspace_projects', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+})
+
+export const workspaceMembers = pgTable(
+  'workspace_members',
+  {
+    workspaceProjectId: text('workspace_project_id')
+      .notNull()
+      .references(() => workspaceProjects.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    role: workspaceMemberRoleEnum('role').notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.workspaceProjectId, t.userId] }),
+  }),
+)
+
+export const folders = pgTable('folders', {
+  id: text('id').primaryKey(),
+  workspaceProjectId: text('workspace_project_id')
+    .notNull()
+    .references(() => workspaceProjects.id, { onDelete: 'cascade' }),
+  parentFolderId: text('parent_folder_id').references((): AnyPgColumn => folders.id, {
+    onDelete: 'cascade',
+  }),
+  name: text('name').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+})
+
+export const projects = pgTable('projects', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  fileName: text('file_name').notNull(),
+  duration: integer('duration').notNull(),
+  uploadedAt: timestamp('uploaded_at').notNull().defaultNow(),
+  status: projectStatusEnum('status').notNull(),
+  thumbnailUrl: text('thumbnail_url').notNull(),
+  fileUrl: text('file_url'),
+  /** Public URL of byte-identical original upload (evidence vault). */
+  originalFileUrl: text('original_file_url'),
+  transcriptionProgress: integer('transcription_progress').notNull().default(0),
+  workspaceProjectId: text('workspace_project_id')
+    .notNull()
+    .references(() => workspaceProjects.id, { onDelete: 'cascade' }),
+  folderId: text('folder_id').references(() => folders.id, { onDelete: 'set null' }),
+  caseId: text('case_id'),
+  exhibitNumber: text('exhibit_number'),
+  sha256Hash: text('sha256_hash'),
+  /** ffprobe JSON (original + edit) and derived fields for UI. */
+  mediaMetadata: jsonb('media_metadata').$type<StoredMediaMetadata | null>(),
+})
+
+export const transcripts = pgTable('transcripts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  language: text('language').notNull(),
+  totalDuration: integer('total_duration').notNull(),
+  speechModel: text('speech_model'),
+  label: text('label'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  assemblyAiTranscriptId: text('assembly_ai_transcript_id'),
+})
+
+export const transcriptSegments = pgTable('transcript_segments', {
+  id: text('id').primaryKey(),
+  transcriptId: uuid('transcript_id').notNull().references(() => transcripts.id, { onDelete: 'cascade' }),
+  start: integer('start').notNull(),
+  end: integer('end').notNull(),
+  text: text('text').notNull(),
+  speaker: text('speaker').notNull(),
+  confidence: real('confidence').notNull(),
+  words: jsonb('words'),
+})
+
+export const textOverlays = pgTable('text_overlays', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  text: text('text').notNull(),
+  x: integer('x').notNull(),
+  y: integer('y').notNull(),
+  fontSize: integer('font_size').notNull(),
+  fontColor: text('font_color').notNull(),
+  bgColor: text('bg_color').notNull(),
+  bgOpacity: real('bg_opacity').notNull(),
+  startTime: integer('start_time').notNull(),
+  endTime: integer('end_time').notNull(),
+  fontWeight: overlayFontWeightEnum('font_weight').notNull(),
+  width: integer('width').notNull(),
+})
+
+export const workspaceMembersRelations = relations(workspaceMembers, ({ one }) => ({
+  workspace: one(workspaceProjects, {
+    fields: [workspaceMembers.workspaceProjectId],
+    references: [workspaceProjects.id],
+  }),
+}))
+
+export const workspaceProjectsRelations = relations(workspaceProjects, ({ many }) => ({
+  folders: many(folders),
+  media: many(projects),
+  members: many(workspaceMembers),
+}))
+
+export const foldersRelations = relations(folders, ({ one, many }) => ({
+  workspace: one(workspaceProjects, {
+    fields: [folders.workspaceProjectId],
+    references: [workspaceProjects.id],
+  }),
+  parent: one(folders, {
+    fields: [folders.parentFolderId],
+    references: [folders.id],
+    relationName: 'folder_tree',
+  }),
+  children: many(folders, { relationName: 'folder_tree' }),
+  projects: many(projects),
+}))
+
+export const projectsRelations = relations(projects, ({ one, many }) => ({
+  workspace: one(workspaceProjects, {
+    fields: [projects.workspaceProjectId],
+    references: [workspaceProjects.id],
+  }),
+  folder: one(folders, {
+    fields: [projects.folderId],
+    references: [folders.id],
+  }),
+  transcripts: many(transcripts),
+  textOverlays: many(textOverlays),
+}))
+
+export const transcriptsRelations = relations(transcripts, ({ one, many }) => ({
+  project: one(projects, {
+    fields: [transcripts.projectId],
+    references: [projects.id],
+  }),
+  segments: many(transcriptSegments),
+}))
+
+export const transcriptSegmentsRelations = relations(transcriptSegments, ({ one }) => ({
+  transcript: one(transcripts, {
+    fields: [transcriptSegments.transcriptId],
+    references: [transcripts.id],
+  }),
+}))
+
+export const textOverlaysRelations = relations(textOverlays, ({ one }) => ({
+  project: one(projects, {
+    fields: [textOverlays.projectId],
+    references: [projects.id],
+  }),
+}))
+
+export type WorkspaceProjectRow = typeof workspaceProjects.$inferSelect
+export type WorkspaceProjectInsert = typeof workspaceProjects.$inferInsert
+export type WorkspaceMemberRow = typeof workspaceMembers.$inferSelect
+export type WorkspaceMemberInsert = typeof workspaceMembers.$inferInsert
+export type FolderRow = typeof folders.$inferSelect
+export type FolderInsert = typeof folders.$inferInsert
+export type ProjectRow = typeof projects.$inferSelect
+export type ProjectInsert = typeof projects.$inferInsert
+export type TranscriptRow = typeof transcripts.$inferSelect
+export type TranscriptInsert = typeof transcripts.$inferInsert
+export type TranscriptSegmentRow = typeof transcriptSegments.$inferSelect
+export type TranscriptSegmentInsert = typeof transcriptSegments.$inferInsert
+export type TextOverlayRow = typeof textOverlays.$inferSelect
+export type TextOverlayInsert = typeof textOverlays.$inferInsert

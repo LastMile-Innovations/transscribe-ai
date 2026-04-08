@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "original_file_url" text;

@@ -1,0 +1,346 @@
+'use client'
+
+import { useRef, useEffect, useState, useCallback } from 'react'
+import { toast } from 'sonner'
+import {
+  Plus,
+  Trash2,
+  Merge,
+  Copy,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useApp } from '@/lib/app-context'
+import type { TranscriptSegment } from '@/lib/types'
+import { cn } from '@/lib/utils'
+
+function formatTime(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  const msRemaining = ms % 1000
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(Math.floor(msRemaining / 100))}`
+}
+
+const SPEAKER_COLORS: Record<string, string> = {
+  'Speaker A': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  'Speaker B': 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+  'Interviewer': 'bg-violet-500/20 text-violet-400 border-violet-500/30',
+  'Candidate': 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+  'Host': 'bg-rose-500/20 text-rose-400 border-rose-500/30',
+  'Guest': 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
+}
+
+function getSpeakerColor(speaker: string): string {
+  return SPEAKER_COLORS[speaker] ?? 'bg-muted text-muted-foreground border-border'
+}
+
+function ConfidenceBar({ value }: { value: number }) {
+  const pct = Math.round(value * 100)
+  const color = pct >= 90 ? 'bg-green-500' : pct >= 75 ? 'bg-yellow-500' : 'bg-red-500'
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="mt-1 h-0.5 w-full overflow-hidden rounded-full bg-muted">
+          <div className={cn('h-full rounded-full', color)} style={{ width: `${pct}%` }} />
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>{pct}% confidence</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function SegmentRow({
+  segment,
+  index,
+  isActive,
+  isNextMergeable,
+  nextSegmentId,
+  onSeek,
+}: {
+  segment: TranscriptSegment
+  index: number
+  isActive: boolean
+  isNextMergeable: boolean
+  nextSegmentId: string | null
+  onSeek: (ms: number) => void
+}) {
+  const { dispatch } = useApp()
+  const rowRef = useRef<HTMLDivElement>(null)
+  const [editingSpeaker, setEditingSpeaker] = useState(false)
+  const [speakerValue, setSpeakerValue] = useState(segment.speaker)
+
+  // Auto-scroll active segment into view
+  useEffect(() => {
+    if (isActive && rowRef.current) {
+      rowRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [isActive])
+
+  const updateText = useCallback(
+    (text: string) => {
+      dispatch({ type: 'UPDATE_SEGMENT', id: segment.id, updates: { text } })
+    },
+    [dispatch, segment.id],
+  )
+
+  const commitSpeaker = useCallback(() => {
+    const trimmed = speakerValue.trim()
+    if (trimmed && trimmed !== segment.speaker) {
+      dispatch({ type: 'UPDATE_SEGMENT', id: segment.id, updates: { speaker: trimmed } })
+    }
+    setEditingSpeaker(false)
+  }, [dispatch, segment.id, segment.speaker, speakerValue])
+
+  const handleDelete = () => {
+    dispatch({ type: 'DELETE_SEGMENT', id: segment.id })
+    toast.success('Segment deleted.')
+  }
+
+  const handleAddAfter = () => {
+    const newSeg: TranscriptSegment = {
+      id: `seg-new-${Date.now()}`,
+      start: segment.end + 100,
+      end: segment.end + 5000,
+      text: '',
+      speaker: segment.speaker,
+      confidence: 1,
+    }
+    dispatch({ type: 'ADD_SEGMENT', segment: newSeg, afterId: segment.id })
+    toast.success('Segment added.')
+  }
+
+  const handleMerge = () => {
+    if (!nextSegmentId) return
+    dispatch({ type: 'MERGE_SEGMENTS', id1: segment.id, id2: nextSegmentId })
+    toast.success('Segments merged.')
+  }
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(`[${formatTime(segment.start)} → ${formatTime(segment.end)}] ${segment.speaker}\n${segment.text}`)
+    toast.success('Copied to clipboard.')
+  }
+
+  return (
+    <div ref={rowRef}>
+      <div
+        className={cn(
+          'group relative rounded-lg border p-3 transition-all duration-150',
+          isActive
+            ? 'border-brand/50 bg-brand/5 shadow-sm shadow-brand/10'
+            : 'border-transparent bg-muted/30 hover:border-border hover:bg-muted/50',
+        )}
+      >
+        {/* Active indicator */}
+        {isActive && (
+          <div className="absolute left-0 top-2 h-[calc(100%-16px)] w-0.5 rounded-full bg-brand" />
+        )}
+
+        {/* Header row */}
+        <div className="mb-2 flex items-center gap-2 pl-2">
+          {/* Timestamp — click to seek */}
+          <button
+            type="button"
+            onClick={() => onSeek(segment.start)}
+            className="shrink-0 font-mono text-xs text-muted-foreground hover:text-brand transition-colors"
+          >
+            {formatTime(segment.start)}
+          </button>
+
+          <span className="text-xs text-muted-foreground/50">–</span>
+
+          <button
+            type="button"
+            onClick={() => onSeek(segment.end)}
+            className="shrink-0 font-mono text-xs text-muted-foreground hover:text-brand transition-colors"
+          >
+            {formatTime(segment.end)}
+          </button>
+
+          {/* Speaker badge */}
+          {editingSpeaker ? (
+            <input
+              autoFocus
+              value={speakerValue}
+              onChange={(e) => setSpeakerValue(e.target.value)}
+              onBlur={commitSpeaker}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitSpeaker()
+                if (e.key === 'Escape') setEditingSpeaker(false)
+              }}
+              className="h-5 w-28 rounded border border-brand bg-background px-1.5 font-mono text-xs outline-none ring-1 ring-brand/30"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => { setSpeakerValue(segment.speaker); setEditingSpeaker(true) }}
+              className={cn(
+                'rounded border px-1.5 py-0.5 font-mono text-xs transition-opacity hover:opacity-80',
+                getSpeakerColor(segment.speaker),
+              )}
+              title="Click to rename speaker"
+            >
+              {segment.speaker}
+            </button>
+          )}
+
+          {/* Actions — visible on hover on desktop, always visible on mobile */}
+          <div className="ml-auto flex items-center gap-0.5 opacity-100 md:opacity-0 transition-opacity md:group-hover:opacity-100">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon-sm" onClick={handleCopy} className="size-6">
+                  <Copy className="size-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Copy segment</TooltipContent>
+            </Tooltip>
+
+            {isNextMergeable && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" onClick={handleMerge} className="size-6">
+                    <Merge className="size-3" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Merge with next</TooltipContent>
+              </Tooltip>
+            )}
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={handleDelete}
+                  className="size-6 hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="size-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete segment</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+
+        {/* Text editor */}
+        <textarea
+          value={segment.text}
+          onChange={(e) => updateText(e.target.value)}
+          rows={2}
+          className="w-full resize-none rounded bg-transparent pl-2 font-sans text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground focus:bg-background/50"
+          placeholder="Transcript text..."
+        />
+
+        <div className="pl-2">
+          <ConfidenceBar value={segment.confidence} />
+        </div>
+      </div>
+
+      {/* "Add segment" button between rows */}
+      <div className="flex items-center justify-center py-0.5 opacity-100 md:opacity-0 transition-opacity md:hover:opacity-100 group/add">
+        <button
+          type="button"
+          onClick={handleAddAfter}
+          className="flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-muted-foreground hover:border-brand/50 hover:text-brand transition-colors"
+        >
+          <Plus className="size-3" />
+          Add segment
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export function TranscriptEditor() {
+  const { state, dispatch } = useApp()
+  const [searchTerm, setSearchTerm] = useState('')
+
+  const transcript = state.transcript
+  const playerTime = state.playerTime
+
+  const seek = useCallback(
+    (ms: number) => {
+      const video = document.querySelector('video')
+      if (video) video.currentTime = ms / 1000
+      dispatch({ type: 'SET_PLAYER_TIME', time: ms })
+    },
+    [dispatch],
+  )
+
+  const handleExportClipboard = () => {
+    if (!transcript) return
+    const text = transcript.segments
+      .map((s) => `[${formatTime(s.start)} → ${formatTime(s.end)}] ${s.speaker}\n${s.text}`)
+      .join('\n\n')
+    navigator.clipboard.writeText(text)
+    toast.success('Full transcript copied to clipboard.')
+  }
+
+  if (!transcript) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        No transcript available.
+      </div>
+    )
+  }
+
+  const filtered = searchTerm
+    ? transcript.segments.filter(
+        (s) =>
+          s.text.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          s.speaker.toLowerCase().includes(searchTerm.toLowerCase()),
+      )
+    : transcript.segments
+
+  const activeSegmentId = transcript.segments.find(
+    (s) => playerTime >= s.start && playerTime <= s.end,
+  )?.id
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Toolbar */}
+      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+        <input
+          type="search"
+          placeholder="Search transcript..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="h-7 flex-1 rounded-md border border-input bg-transparent px-2.5 text-xs outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring/50"
+        />
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {filtered.length} / {transcript.segments.length}
+        </span>
+        <Button variant="outline" size="sm" onClick={handleExportClipboard} className="h-7 px-2 text-xs">
+          <Copy className="size-3 md:mr-1" />
+          <span className="hidden md:inline">Copy all</span>
+        </Button>
+      </div>
+
+      {/* Segments */}
+      <ScrollArea className="flex-1">
+        <div className="space-y-0.5 p-3">
+          {filtered.map((seg, i) => {
+            const nextSeg = filtered[i + 1] ?? null
+            return (
+              <SegmentRow
+                key={seg.id}
+                segment={seg}
+                index={i}
+                isActive={seg.id === activeSegmentId}
+                isNextMergeable={nextSeg !== null && nextSeg.speaker === seg.speaker}
+                nextSegmentId={nextSeg?.id ?? null}
+                onSeek={seek}
+              />
+            )
+          })}
+          {filtered.length === 0 && (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No segments match your search.
+            </p>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  )
+}

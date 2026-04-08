@@ -1,0 +1,40 @@
+import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3'
+import dotenv from 'dotenv'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+dotenv.config({ path: resolve(root, '.env.local') })
+dotenv.config({ path: resolve(root, '.env') })
+
+const endpoint = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
+const bucket = process.env.MINIO_BUCKET
+
+if (!endpoint || !bucket) {
+  console.error('Set MINIO_PUBLIC_ENDPOINT and MINIO_BUCKET (.env.local or .env)')
+  process.exit(1)
+}
+
+const client = new S3Client({
+  region: process.env.MINIO_REGION || 'us-east-1',
+  endpoint,
+  credentials: {
+    accessKeyId: process.env.MINIO_ROOT_USER || '',
+    secretAccessKey: process.env.MINIO_ROOT_PASSWORD || '',
+  },
+  forcePathStyle: true,
+})
+
+try {
+  await client.send(new CreateBucketCommand({ Bucket: bucket }))
+  console.log('Created bucket:', bucket)
+} catch (e) {
+  const code = e.name
+  const status = e.$metadata?.httpStatusCode
+  if (code === 'BucketAlreadyOwnedByYou' || code === 'BucketAlreadyExists' || status === 409) {
+    console.log('Bucket already exists:', bucket)
+    process.exit(0)
+  }
+  console.error('CreateBucket failed:', code, status != null ? `HTTP ${status}` : '', e.message || e)
+  process.exit(1)
+}
