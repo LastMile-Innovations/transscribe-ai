@@ -5,6 +5,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { db } from '@/lib/db'
+import {
+  isMissingAwaitingTranscriptStatusError,
+  missingAwaitingTranscriptStatusMessage,
+} from '@/lib/db/error-utils'
 import { projects } from '@/lib/db/schema'
 import { ffprobeFullReport, transcodeOrRemuxToMp4 } from '@/lib/ffmpeg-transcode'
 import { parseClientMediaCaptureFromJson } from '@/lib/client-media-capture'
@@ -126,6 +130,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     })
   } catch (e) {
     console.error('prepare-edit-asset:', e)
+    if (isMissingAwaitingTranscriptStatusError(e)) {
+      return NextResponse.json({ error: missingAwaitingTranscriptStatusMessage }, { status: 503 })
+    }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : 'Media processing failed' },
       { status: 500 },

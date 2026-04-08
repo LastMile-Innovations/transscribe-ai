@@ -104,6 +104,7 @@ type MultipartUploadPlan = {
   uploadType: 'multipart'
   uploadId: string
   partSize: number
+  maxParallelParts: number
   parts: Array<{ partNumber: number; signedUrl: string }>
   url: string | null
   thresholdBytes: number
@@ -209,7 +210,8 @@ function ProjectCard({
   const [deleting, setDeleting] = useState(false)
   const { label, variant, icon } = STATUS_CONFIG[project.status]
   const isReady = project.status === 'ready'
-  const canOpenInEditor = project.status === 'ready' || project.status === 'awaiting_transcript'
+  const canOpenInEditor =
+    project.status === 'ready' || project.status === 'awaiting_transcript' || Boolean(project.fileUrl)
   const isProcessing = project.status === 'uploading' || project.status === 'transcribing'
 
   const startRename = (e: React.MouseEvent) => {
@@ -282,15 +284,16 @@ function ProjectCard({
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 px-3 py-2 text-center backdrop-blur-sm">
             <Loader2 className="size-8 shrink-0 animate-spin text-brand" />
             <span className="text-sm font-medium text-white">
-              {project.status === 'uploading'
+              {project.uploadProgress
                 ? 'Step 1 of 3: Uploading to vault…'
-                : project.mediaStep === 'prepare'
+                : project.mediaStep === 'prepare' ||
+                    (project.status === 'transcribing' && !project.mediaMetadata?.editKey)
                   ? 'Step 2 of 3: Preparing editor MP4…'
                   : project.mediaStep === 'transcribe'
                     ? 'Step 3 of 3: Transcribing with AssemblyAI…'
                     : 'Processing…'}
             </span>
-            {project.status === 'uploading' && project.uploadProgress ? (
+            {project.uploadProgress ? (
               <VaultUploadStats up={project.uploadProgress} />
             ) : null}
             <div className="w-44 max-w-full">
@@ -298,7 +301,7 @@ function ProjectCard({
             </div>
             <span className="text-xs text-white/70 tabular-nums">{project.transcriptionProgress}%</span>
             
-            {project.status === 'uploading' && onCancelUpload && (
+            {project.status === 'uploading' && project.uploadProgress && onCancelUpload && (
               <Button
                 variant="outline"
                 size="sm"
@@ -418,7 +421,7 @@ function ProjectCard({
           </p>
         )}
 
-        {project.status === 'error' && project.fileUrl && onStartTranscription && (
+        {project.status === 'error' && project.fileUrl && project.mediaMetadata?.editKey && onStartTranscription && (
           <div
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
@@ -542,7 +545,7 @@ function ProjectCard({
 
         {canOpenInEditor && (
           <div className="mt-1 flex items-center gap-1 text-xs font-medium text-brand opacity-100 lg:opacity-0 transition-opacity lg:group-hover:opacity-100">
-            {project.status === 'awaiting_transcript' ? 'Open preview in editor' : 'Open in Editor'}
+            {isReady ? 'Open in Editor' : 'Open preview in editor'}
             <ChevronRight className="size-3" />
           </div>
         )}
@@ -695,7 +698,7 @@ function LibraryPageContent() {
   const searchParams = useSearchParams()
   const wpId = searchParams.get('wp')
   const { user } = useUser()
-  const { dispatch } = useApp()
+  const { state, dispatch } = useApp()
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
@@ -798,8 +801,9 @@ function LibraryPageContent() {
         return
       }
       if (transcriptionBusyRef.current) return
-      const proj = tree?.media.find((p) => p.id === projectId)
-      if (!proj || (proj.status !== 'awaiting_transcript' && !(proj.status === 'error' && proj.fileUrl))) {
+      const proj = state.projects.find((p) => p.id === projectId) ?? tree?.media.find((p) => p.id === projectId)
+      const canRetryTranscription = proj?.status === 'error' && proj.mediaMetadata?.editKey
+      if (!proj || !proj.mediaMetadata?.editKey || (proj.status !== 'awaiting_transcript' && !canRetryTranscription)) {
         toast.error('That file is not waiting for transcription.')
         return
       }
@@ -1003,6 +1007,7 @@ function LibraryPageContent() {
     },
     [
       viewerLocked,
+      state.projects,
       tree,
       dispatch,
       refetchTree,
@@ -1558,40 +1563,50 @@ function LibraryPageContent() {
             xhr.send(file)
           })
         } else {
-          let currentXhr: XMLHttpRequest | null = null
           let cancelled = false
           let completed = false
-          const uploadedParts: Array<{ ETag: string; PartNumber: number }> = []
+          const activePartXhrs = new Map<number, XMLHttpRequest>()
+          const partLoadedBytes = new Map<number, number>()
+          const uploadedParts = new Map<number, string>()
+
+          const syncMultipartProgress = () => {
+            const loaded = Array.from(partLoadedBytes.values()).reduce((sum, value) => sum + value, 0)
+            updateUploadProgress(Math.min(loaded, file.size), file.size, uploadStartedAt)
+          }
+
+          const abortActivePartUploads = () => {
+            cancelled = true
+            for (const xhr of activePartXhrs.values()) {
+              xhr.abort()
+            }
+            activePartXhrs.clear()
+          }
 
           activeUploadsRef.current.set(id, {
-            abort: () => {
-              cancelled = true
-              currentXhr?.abort()
-            },
+            abort: abortActivePartUploads,
           })
 
           try {
-            let uploadedBytes = 0
+            const uploadPart = (part: { partNumber: number; signedUrl: string }) =>
+              new Promise<string>((resolve, reject) => {
+                const start = (part.partNumber - 1) * presignData.partSize
+                const end = Math.min(start + presignData.partSize, file.size)
+                const chunk = file.slice(start, end)
+                const chunkSize = end - start
 
-            for (const part of presignData.parts) {
-              if (cancelled) throw new Error('Upload cancelled.')
-
-              const start = (part.partNumber - 1) * presignData.partSize
-              const end = Math.min(start + presignData.partSize, file.size)
-              const chunk = file.slice(start, end)
-
-              const etag = await new Promise<string>((resolve, reject) => {
                 const xhr = new XMLHttpRequest()
-                currentXhr = xhr
+                activePartXhrs.set(part.partNumber, xhr)
                 xhr.open('PUT', part.signedUrl)
                 xhr.setRequestHeader('Content-Type', file.type)
 
                 xhr.upload.onprogress = (e) => {
-                  const loaded = uploadedBytes + (e.lengthComputable ? e.loaded : 0)
-                  updateUploadProgress(loaded, file.size, uploadStartedAt)
+                  const loaded = e.lengthComputable ? Math.min(e.loaded, chunkSize) : 0
+                  partLoadedBytes.set(part.partNumber, loaded)
+                  syncMultipartProgress()
                 }
 
                 xhr.onload = () => {
+                  activePartXhrs.delete(part.partNumber)
                   if (xhr.status < 200 || xhr.status >= 300) {
                     reject(
                       new Error(
@@ -1609,18 +1624,51 @@ function LibraryPageContent() {
                     return
                   }
 
+                  partLoadedBytes.set(part.partNumber, chunkSize)
+                  syncMultipartProgress()
                   resolve(etag)
                 }
 
-                xhr.onerror = () =>
+                xhr.onerror = () => {
+                  activePartXhrs.delete(part.partNumber)
                   reject(new Error(`Network error during multipart upload (part ${part.partNumber}).`))
-                xhr.onabort = () => reject(new Error('Upload cancelled.'))
+                }
+                xhr.onabort = () => {
+                  activePartXhrs.delete(part.partNumber)
+                  reject(new Error('Upload cancelled.'))
+                }
                 xhr.send(chunk)
               })
 
-              uploadedBytes = end
-              updateUploadProgress(uploadedBytes, file.size, uploadStartedAt)
-              uploadedParts.push({ ETag: etag, PartNumber: part.partNumber })
+            const maxParallelParts = Math.max(
+              1,
+              Math.min(presignData.maxParallelParts, presignData.parts.length),
+            )
+            let nextPartIndex = 0
+
+            const runMultipartWorker = async () => {
+              while (true) {
+                if (cancelled) throw new Error('Upload cancelled.')
+                const part = presignData.parts[nextPartIndex++]
+                if (!part) return
+                const etag = await uploadPart(part)
+                uploadedParts.set(part.partNumber, etag)
+              }
+            }
+
+            await Promise.all(
+              Array.from({ length: maxParallelParts }, () => runMultipartWorker()),
+            )
+            if (cancelled) throw new Error('Upload cancelled.')
+
+            const completedParts = presignData.parts
+              .map((part) => ({
+                ETag: uploadedParts.get(part.partNumber) ?? '',
+                PartNumber: part.partNumber,
+              }))
+              .filter((part) => part.ETag)
+            if (completedParts.length !== presignData.parts.length) {
+              throw new Error('Multipart upload finished with missing parts.')
             }
 
             const completeRes = await fetch('/api/upload/multipart', {
@@ -1631,7 +1679,7 @@ function LibraryPageContent() {
                 workspaceProjectId: wpId,
                 filename: originalKey,
                 uploadId: presignData.uploadId,
-                parts: uploadedParts,
+                parts: completedParts,
               }),
             })
             if (!completeRes.ok) {
@@ -1644,6 +1692,9 @@ function LibraryPageContent() {
 
             completed = true
           } catch (error) {
+            if (!cancelled) {
+              abortActivePartUploads()
+            }
             if (!completed) {
               await fetch('/api/upload/multipart', {
                 method: 'POST',
@@ -1658,100 +1709,21 @@ function LibraryPageContent() {
             }
             throw error
           } finally {
-            currentXhr = null
             activeUploadsRef.current.delete(id)
           }
         }
 
+        const originalPlaybackUrl = presignData.url
         dispatch({
           type: 'UPDATE_PROJECT',
           id,
           updates: {
             status: 'transcribing',
+            fileUrl: originalPlaybackUrl,
+            originalFileUrl: originalPlaybackUrl,
             transcriptionProgress: 48,
             uploadProgress: undefined,
             mediaStep: 'prepare',
-          },
-        })
-        setTree((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            media: prev.media.map((m) =>
-              m.id === id
-                ? {
-                    ...m,
-                    status: 'transcribing',
-                    transcriptionProgress: 48,
-                    uploadProgress: undefined,
-                    mediaStep: 'prepare',
-                  }
-                : m,
-            ),
-          }
-        })
-
-        const prepRes = await fetch(`/api/projects/${id}/prepare-edit-asset`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ originalKey, clientCapture }),
-        })
-        const prepBody = (await prepRes.json().catch(() => null)) as {
-          error?: string
-          fileUrl?: string
-          originalFileUrl?: string
-          sha256Hash?: string
-          duration?: number
-          mediaMetadata?: StoredMediaMetadata
-          playbackUrlRefreshedAt?: number | null
-          playbackUrlExpiresAt?: number | null
-        } | null
-        if (!prepRes.ok || !prepBody?.fileUrl) {
-          const fromApi =
-            prepBody && typeof prepBody.error === 'string' && prepBody.error.trim()
-              ? prepBody.error.trim()
-              : null
-          throw new Error(
-            fromApi ||
-              friendlyHttpMessage(
-                prepRes.status,
-                'Could not prepare the editor video (transcode or storage).',
-              ),
-          )
-        }
-        const {
-          fileUrl: editFileUrl,
-          originalFileUrl,
-          sha256Hash,
-          duration: probeDuration,
-          mediaMetadata,
-          playbackUrlRefreshedAt,
-          playbackUrlExpiresAt,
-        } = prepBody as {
-          fileUrl: string
-          originalFileUrl: string
-          sha256Hash: string
-          duration: number
-          mediaMetadata: StoredMediaMetadata
-          playbackUrlRefreshedAt?: number | null
-          playbackUrlExpiresAt?: number | null
-        }
-
-        dispatch({
-          type: 'UPDATE_PROJECT',
-          id,
-          updates: {
-            status: 'awaiting_transcript',
-            fileUrl: editFileUrl,
-            originalFileUrl,
-            sha256Hash,
-            duration: probeDuration,
-            mediaMetadata,
-            playbackUrlRefreshedAt,
-            playbackUrlExpiresAt,
-            transcriptionProgress: 0,
-            uploadProgress: undefined,
-            mediaStep: undefined,
             feedbackError: undefined,
           },
         })
@@ -1763,17 +1735,12 @@ function LibraryPageContent() {
               m.id === id
                 ? {
                     ...m,
-                    status: 'awaiting_transcript',
-                    fileUrl: editFileUrl,
-                    originalFileUrl,
-                    sha256Hash,
-                    duration: probeDuration,
-                    mediaMetadata,
-                    playbackUrlRefreshedAt,
-                    playbackUrlExpiresAt,
-                    transcriptionProgress: 0,
+                    status: 'transcribing',
+                    fileUrl: originalPlaybackUrl,
+                    originalFileUrl: originalPlaybackUrl,
+                    transcriptionProgress: 48,
                     uploadProgress: undefined,
-                    mediaStep: undefined,
+                    mediaStep: 'prepare',
                     feedbackError: undefined,
                   }
                 : m,
@@ -1781,16 +1748,179 @@ function LibraryPageContent() {
           }
         })
 
-        await refetchTree()
-        
-        if (autoTranscribe) {
-          toast.success('Upload complete. Starting transcription automatically...')
-          startTranscriptionForProject(id)
-        } else {
-          toast.success(
-            'Upload complete. Adjust Transcription Settings if needed, then tap Transcribe on this file.',
-          )
-        }
+        await fetch(`/api/projects/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: 'transcribing',
+            fileUrl: originalPlaybackUrl,
+            originalFileUrl: originalPlaybackUrl,
+            transcriptionProgress: 48,
+          }),
+        }).catch((error) => {
+          console.error('Failed to persist prepare-in-background state:', error)
+        })
+
+        void (async () => {
+          try {
+            const prepRes = await fetch(`/api/projects/${id}/prepare-edit-asset`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ originalKey, clientCapture }),
+            })
+            const prepBody = (await prepRes.json().catch(() => null)) as {
+              error?: string
+              fileUrl?: string
+              originalFileUrl?: string
+              sha256Hash?: string
+              duration?: number
+              mediaMetadata?: StoredMediaMetadata
+              playbackUrlRefreshedAt?: number | null
+              playbackUrlExpiresAt?: number | null
+            } | null
+            if (!prepRes.ok || !prepBody?.fileUrl) {
+              const fromApi =
+                prepBody && typeof prepBody.error === 'string' && prepBody.error.trim()
+                  ? prepBody.error.trim()
+                  : null
+              throw new Error(
+                fromApi ||
+                  friendlyHttpMessage(
+                    prepRes.status,
+                    'Could not prepare the editor video (transcode or storage).',
+                  ),
+              )
+            }
+
+            const {
+              fileUrl: editFileUrl,
+              originalFileUrl,
+              sha256Hash,
+              duration: probeDuration,
+              mediaMetadata,
+              playbackUrlRefreshedAt,
+              playbackUrlExpiresAt,
+            } = prepBody as {
+              fileUrl: string
+              originalFileUrl: string
+              sha256Hash: string
+              duration: number
+              mediaMetadata: StoredMediaMetadata
+              playbackUrlRefreshedAt?: number | null
+              playbackUrlExpiresAt?: number | null
+            }
+
+            dispatch({
+              type: 'UPDATE_PROJECT',
+              id,
+              updates: {
+                status: 'awaiting_transcript',
+                fileUrl: editFileUrl,
+                originalFileUrl,
+                sha256Hash,
+                duration: probeDuration,
+                mediaMetadata,
+                playbackUrlRefreshedAt,
+                playbackUrlExpiresAt,
+                transcriptionProgress: 0,
+                uploadProgress: undefined,
+                mediaStep: undefined,
+                feedbackError: undefined,
+              },
+            })
+            setTree((prev) => {
+              if (!prev) return prev
+              return {
+                ...prev,
+                media: prev.media.map((m) =>
+                  m.id === id
+                    ? {
+                        ...m,
+                        status: 'awaiting_transcript',
+                        fileUrl: editFileUrl,
+                        originalFileUrl,
+                        sha256Hash,
+                        duration: probeDuration,
+                        mediaMetadata,
+                        playbackUrlRefreshedAt,
+                        playbackUrlExpiresAt,
+                        transcriptionProgress: 0,
+                        uploadProgress: undefined,
+                        mediaStep: undefined,
+                        feedbackError: undefined,
+                      }
+                    : m,
+                ),
+              }
+            })
+
+            await refetchTree()
+
+            if (autoTranscribe) {
+              toast.success('Editor MP4 is ready. Starting transcription automatically...')
+              void startTranscriptionForProject(id)
+            } else {
+              toast.success(
+                'Editor MP4 ready. Adjust Transcription Settings if needed, then tap Transcribe on this file.',
+              )
+            }
+          } catch (prepError) {
+            console.error('Prepare-edit-asset error:', prepError)
+            const message =
+              prepError instanceof Error
+                ? prepError.message
+                : 'Could not prepare the editor video (transcode or storage).'
+            dispatch({
+              type: 'UPDATE_PROJECT',
+              id,
+              updates: {
+                status: 'error',
+                fileUrl: originalPlaybackUrl,
+                originalFileUrl: originalPlaybackUrl,
+                mediaStep: undefined,
+                feedbackError: `${message} The original upload is still available for preview.`,
+              },
+            })
+            setTree((prev) => {
+              if (!prev) return prev
+              return {
+                ...prev,
+                media: prev.media.map((m) =>
+                  m.id === id
+                    ? {
+                        ...m,
+                        status: 'error',
+                        fileUrl: originalPlaybackUrl,
+                        originalFileUrl: originalPlaybackUrl,
+                        mediaStep: undefined,
+                        feedbackError: `${message} The original upload is still available for preview.`,
+                      }
+                    : m,
+                ),
+              }
+            })
+            await fetch(`/api/projects/${id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                status: 'error',
+                fileUrl: originalPlaybackUrl,
+                originalFileUrl: originalPlaybackUrl,
+              }),
+            }).catch(() => {})
+            await refetchTree()
+            toast.error('Upload finished, but background preparation failed', {
+              description: message,
+              duration: 10_000,
+            })
+          }
+        })()
+
+        toast.success(
+          originalPlaybackUrl
+            ? 'Upload complete. Preview is ready while the editor MP4 prepares in the background.'
+            : 'Upload complete. Preparing the editor MP4 in the background.',
+        )
 
       } catch (err) {
         console.error('Upload error:', err)

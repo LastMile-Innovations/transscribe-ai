@@ -71,7 +71,19 @@ export const folders = pgTable('folders', {
   }),
   name: text('name').notNull(),
   sortOrder: integer('sort_order').notNull().default(0),
-})
+}, (t) => ({
+  workspaceProjectSortIdx: index('folders_workspace_project_sort_idx').on(
+    t.workspaceProjectId,
+    t.sortOrder,
+    t.name,
+  ),
+  workspaceParentSortIdx: index('folders_workspace_parent_sort_idx').on(
+    t.workspaceProjectId,
+    t.parentFolderId,
+    t.sortOrder,
+    t.name,
+  ),
+}))
 
 export const projects = pgTable(
   'projects',
@@ -98,7 +110,10 @@ export const projects = pgTable(
     mediaMetadata: jsonb('media_metadata').$type<StoredMediaMetadata | null>(),
   },
   (t) => ({
-    workspaceProjectIdIdx: index('projects_workspace_project_id_idx').on(t.workspaceProjectId),
+    workspaceProjectUploadedAtIdx: index('projects_workspace_project_uploaded_at_idx').on(
+      t.workspaceProjectId,
+      t.uploadedAt,
+    ),
   }),
 )
 
@@ -115,7 +130,7 @@ export const transcripts = pgTable(
     assemblyAiTranscriptId: text('assembly_ai_transcript_id'),
   },
   (t) => ({
-    projectIdIdx: index('transcripts_project_id_idx').on(t.projectId),
+    projectCreatedAtIdx: index('transcripts_project_created_at_idx').on(t.projectId, t.createdAt),
     /** One pending row per AssemblyAI job; multiple NULLs allowed for legacy rows. */
     assemblyAiTranscriptIdUq: uniqueIndex('transcripts_assembly_ai_transcript_id_uq')
       .on(t.assemblyAiTranscriptId)
@@ -136,7 +151,7 @@ export const transcriptSegments = pgTable(
     words: jsonb('words').$type<StoredTranscriptWord[] | null>(),
   },
   (t) => ({
-    transcriptIdIdx: index('transcript_segments_transcript_id_idx').on(t.transcriptId),
+    transcriptStartIdx: index('transcript_segments_transcript_start_idx').on(t.transcriptId, t.start),
   }),
 )
 
@@ -154,7 +169,9 @@ export const textOverlays = pgTable('text_overlays', {
   endTime: integer('end_time').notNull(),
   fontWeight: overlayFontWeightEnum('font_weight').notNull(),
   width: integer('width').notNull(),
-})
+}, (t) => ({
+  projectIdIdx: index('text_overlays_project_id_idx').on(t.projectId),
+}))
 
 export const workspaceMembersRelations = relations(workspaceMembers, ({ one }) => ({
   workspace: one(workspaceProjects, {

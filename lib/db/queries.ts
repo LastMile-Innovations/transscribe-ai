@@ -187,7 +187,11 @@ export async function listFoldersForWorkspace(workspaceProjectId: string) {
 }
 
 export async function listMediaForWorkspace(workspaceProjectId: string) {
-  return db.select().from(projects).where(eq(projects.workspaceProjectId, workspaceProjectId))
+  return db
+    .select()
+    .from(projects)
+    .where(eq(projects.workspaceProjectId, workspaceProjectId))
+    .orderBy(desc(projects.uploadedAt))
 }
 
 export async function getWorkspaceTree(workspaceId: string) {

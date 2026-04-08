@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
+import {
+  isMissingAwaitingTranscriptStatusError,
+  missingAwaitingTranscriptStatusMessage,
+} from '@/lib/db/error-utils'
 import { findFolderById } from '@/lib/db/queries'
 import type { ProjectStatus } from '@/lib/db/schema'
 import { projects } from '@/lib/db/schema'
@@ -77,6 +81,9 @@ export async function PATCH(
     return NextResponse.json(row)
   } catch (error) {
     console.error('Error patching project:', error)
+    if (isMissingAwaitingTranscriptStatusError(error)) {
+      return NextResponse.json({ error: missingAwaitingTranscriptStatusMessage }, { status: 503 })
+    }
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

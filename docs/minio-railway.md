@@ -21,10 +21,16 @@
 
 - Single-request uploads remain the default for smaller files.
 - Large files switch to multipart presigned uploads.
+- The browser now uploads multipart parts in a bounded parallel pool instead of one-at-a-time.
 - Tuning knobs:
-  - `MINIO_MULTIPART_THRESHOLD_MB` default `256`
-  - `MINIO_MULTIPART_PART_SIZE_MB` default `32`
+  - `MINIO_MULTIPART_THRESHOLD_MB` default `64`
+  - `MINIO_MULTIPART_PART_SIZE_MB` default `16`
+  - `MINIO_MULTIPART_MAX_PARALLEL_UPLOADS` default `4`
   - `MINIO_UPLOAD_PRESIGN_EXPIRES_SEC` default `3600`
+- Recommended Railway + MinIO starting point:
+  - keep the threshold low enough that medium-large phone/laptop uploads use multipart
+  - start with `16 MB` parts and `4` parallel uploads
+  - increase part size first if MinIO shows too many concurrent requests; increase parallelism only after verifying the client still has unused upstream bandwidth
 
 ## Playback URL refresh
 

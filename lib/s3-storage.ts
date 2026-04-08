@@ -21,6 +21,7 @@ import { createReadStream, createWriteStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { buildOriginalUploadKey } from './media-keys'
 
 type ResolvedStorage = {
   clientConfig: S3ClientConfig
@@ -35,8 +36,9 @@ const DEFAULT_BROWSER_PRESIGN_EXPIRES_SEC = 60 * 60 * 24
 const DEFAULT_TRANSCRIPTION_PRESIGN_EXPIRES_SEC = 60 * 60 * 24 * 2
 const DEFAULT_UPLOAD_PRESIGN_EXPIRES_SEC = 60 * 60
 const MIN_MULTIPART_PART_SIZE_BYTES = 5 * 1024 * 1024
-const DEFAULT_MULTIPART_PART_SIZE_BYTES = 32 * 1024 * 1024
-const DEFAULT_MULTIPART_THRESHOLD_BYTES = 256 * 1024 * 1024
+const DEFAULT_MULTIPART_PART_SIZE_BYTES = 16 * 1024 * 1024
+const DEFAULT_MULTIPART_THRESHOLD_BYTES = 64 * 1024 * 1024
+const DEFAULT_MULTIPART_MAX_PARALLEL_UPLOADS = 4
 
 function encodeKeyPath(key: string): string {
   return key.split('/').map(encodeURIComponent).join('/')
@@ -216,6 +218,19 @@ export function multipartUploadThresholdBytes(): number {
   )
 }
 
+export function multipartUploadMaxParallelParts(): number {
+  return Math.max(
+    1,
+    Math.min(
+      8,
+      readPositiveIntEnv(
+        'MINIO_MULTIPART_MAX_PARALLEL_UPLOADS',
+        DEFAULT_MULTIPART_MAX_PARALLEL_UPLOADS,
+      ),
+    ),
+  )
+}
+
 export function shouldUseMultipartUpload(fileSize: number): boolean {
   return Number.isFinite(fileSize) && fileSize >= multipartUploadThresholdBytes()
 }
@@ -294,8 +309,11 @@ export async function browserObjectUrl(
 }
 
 type MediaUrlProject = {
+  id: string
+  fileName: string
   fileUrl: string | null
   originalFileUrl?: string | null
+  workspaceProjectId: string
   mediaMetadata?: {
     originalKey?: string
     editKey?: string
@@ -310,8 +328,12 @@ type AccessibleMediaUrlMetadata = {
 export async function withAccessibleMediaUrls<T extends MediaUrlProject>(
   project: T,
 ): Promise<T & AccessibleMediaUrlMetadata> {
+  const derivedOriginalKey =
+    project.mediaMetadata?.originalKey ??
+    buildOriginalUploadKey(project.workspaceProjectId, project.id, project.fileName)
   const editKey = project.mediaMetadata?.editKey
-  const originalKey = project.mediaMetadata?.originalKey
+  const fileKey = editKey ?? (project.fileUrl ? derivedOriginalKey : undefined)
+  const originalKey = project.originalFileUrl || project.fileUrl ? derivedOriginalKey : undefined
   const refreshedAt = Date.now()
   const playbackUrlExpiresAt =
     browserObjectUrlMode() === 'presigned'
@@ -319,7 +341,7 @@ export async function withAccessibleMediaUrls<T extends MediaUrlProject>(
       : null
 
   const [fileUrl, originalFileUrl] = await Promise.all([
-    editKey ? browserObjectUrl(editKey).catch(() => project.fileUrl) : project.fileUrl,
+    fileKey ? browserObjectUrl(fileKey).catch(() => project.fileUrl) : project.fileUrl,
     originalKey
       ? browserObjectUrl(originalKey).catch(() => project.originalFileUrl ?? null)
       : (project.originalFileUrl ?? null),
@@ -381,6 +403,7 @@ export async function createMultipartUploadPlan(
 ): Promise<{
   uploadId: string
   partSize: number
+  maxParallelParts: number
   parts: Array<{ partNumber: number; signedUrl: string }>
 }> {
   const partSize = multipartUploadPartSizeBytes()
@@ -388,7 +411,7 @@ export async function createMultipartUploadPlan(
   const { uploadId } = await createMultipartUpload(objectKey, contentType)
   const partNumbers = Array.from({ length: totalParts }, (_, index) => index + 1)
   const parts = await presignMultipartUploadParts(objectKey, uploadId, partNumbers)
-  return { uploadId, partSize, parts }
+  return { uploadId, partSize, maxParallelParts: multipartUploadMaxParallelParts(), parts }
 }
 
 export async function completeMultipartUpload(

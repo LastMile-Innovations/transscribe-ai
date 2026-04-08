@@ -85,7 +85,10 @@ function canDownloadOriginalProject(project: VideoProject): boolean {
 }
 
 function canDownloadEditedProject(project: VideoProject): boolean {
-  return Boolean(project.mediaMetadata?.editKey || project.fileUrl)
+  return Boolean(
+    project.mediaMetadata?.editKey ||
+      ((project.status === 'ready' || project.status === 'awaiting_transcript') && project.fileUrl),
+  )
 }
 
 function formatTranscriptLabel(t: TranscriptSummary): string {
@@ -297,7 +300,11 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
 
   const startNewTranscription = useCallback(async () => {
     if (!mediaId || (project?.status !== 'ready' && project?.status !== 'awaiting_transcript')) {
-      toast.error('Video is not ready for transcription yet.')
+      toast.error('Editor MP4 is not ready for transcription yet.')
+      return
+    }
+    if (!project?.mediaMetadata?.editKey) {
+      toast.error('The upload preview is ready, but the editor MP4 is still preparing.')
       return
     }
     setStartingTranscribe(true)
@@ -356,7 +363,7 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
     } finally {
       setStartingTranscribe(false)
     }
-  }, [newLabel, project?.status, mediaId, switchTranscript])
+  }, [newLabel, project?.mediaMetadata?.editKey, project?.status, mediaId, switchTranscript])
 
   const selectValue = state.transcript?.id ?? searchParams.get('t') ?? ''
 
