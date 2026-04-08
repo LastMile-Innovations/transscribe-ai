@@ -39,6 +39,58 @@ export type StoredMediaMetadata = {
   clientCapture?: ClientMediaCapture
 }
 
+/** Postgres jsonb rejects NUL in string values; ffprobe can ship huge side_data blobs. */
+const MAX_JSONB_STRING = 32_000
+
+function slimFfprobeReportForStorage(probe: unknown): unknown {
+  if (probe == null || typeof probe !== 'object') return probe
+  const p = probe as Record<string, unknown>
+  const out: Record<string, unknown> = { ...p }
+  if (Array.isArray(p.streams)) {
+    out.streams = p.streams.map((stream) => {
+      if (!stream || typeof stream !== 'object') return stream
+      const s = stream as Record<string, unknown>
+      const { side_data_list: _sd, ...rest } = s
+      return rest
+    })
+  }
+  return out
+}
+
+/**
+ * Makes arbitrary JSON safe for PostgreSQL jsonb and keeps row size reasonable.
+ * - Strips U+0000 (unsupported in jsonb string values).
+ * - Drops non-finite numbers.
+ * - Truncates very long strings (e.g. pathological metadata).
+ */
+export function sanitizeForPostgresJsonb(value: unknown): unknown {
+  if (value === undefined) return undefined
+  if (value === null || typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+  if (typeof value === 'string') {
+    let s = value.includes('\0') ? value.replaceAll('\0', '') : value
+    if (s.length > MAX_JSONB_STRING) {
+      s = `${s.slice(0, MAX_JSONB_STRING - 20)}…[truncated]`
+    }
+    return s
+  }
+  if (Array.isArray(value)) {
+    return value.map((x) => sanitizeForPostgresJsonb(x))
+  }
+  if (typeof value === 'object') {
+    const o = value as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(o)) {
+      const s = sanitizeForPostgresJsonb(v)
+      if (s !== undefined) out[k] = s
+    }
+    return out
+  }
+  return null
+}
+
 type LooseProbe = {
   format?: Record<string, unknown>
   streams?: Array<Record<string, unknown>>
@@ -252,10 +304,12 @@ export function buildStoredMediaMetadata(
     extractedAt: new Date().toISOString(),
     originalKey,
     editKey,
-    original: originalReport,
-    edit: editReport,
-    derived,
-    ...(clientCapture ? { clientCapture } : {}),
+    original: sanitizeForPostgresJsonb(slimFfprobeReportForStorage(originalReport)) as unknown,
+    edit: sanitizeForPostgresJsonb(slimFfprobeReportForStorage(editReport)) as unknown,
+    derived: sanitizeForPostgresJsonb(derived) as MediaMetadataDerived,
+    ...(clientCapture
+      ? { clientCapture: sanitizeForPostgresJsonb(clientCapture) as ClientMediaCapture }
+      : {}),
   }
 }
 

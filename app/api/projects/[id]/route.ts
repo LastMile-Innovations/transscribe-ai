@@ -5,6 +5,8 @@ import { findFolderById } from '@/lib/db/queries'
 import type { ProjectStatus } from '@/lib/db/schema'
 import { projects } from '@/lib/db/schema'
 import type { StoredMediaMetadata } from '@/lib/media-metadata'
+import { storageObjectKeysToDeleteForProject } from '@/lib/media-keys'
+import { deleteStorageObjectsByKeys } from '@/lib/s3-storage'
 import { patchProjectBodySchema } from '@/lib/validation/projects'
 import { requireProjectAccessForRoute } from '@/lib/workspace-access'
 
@@ -88,7 +90,9 @@ export async function DELETE(
     const access = await requireProjectAccessForRoute(id, 'editor')
     if (access instanceof NextResponse) return access
 
+    const keys = storageObjectKeysToDeleteForProject(access.project)
     await db.delete(projects).where(eq(projects.id, id))
+    await deleteStorageObjectsByKeys(keys)
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Error deleting project:', error)

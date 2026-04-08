@@ -65,6 +65,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useApp } from '@/lib/app-context'
@@ -183,6 +192,7 @@ function ProjectCard({
   onRenameTitle,
   onStartTranscription,
   onCancelUpload,
+  onDeleteMedia,
 }: {
   project: VideoProject
   onOpen: (id: string) => void
@@ -191,9 +201,12 @@ function ProjectCard({
   onRenameTitle?: (mediaId: string, title: string) => Promise<void>
   onStartTranscription?: (mediaId: string) => void
   onCancelUpload?: (mediaId: string) => void
+  onDeleteMedia?: (mediaId: string) => Promise<void>
 }) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState('')
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const { label, variant, icon } = STATUS_CONFIG[project.status]
   const isReady = project.status === 'ready'
   const canOpenInEditor = project.status === 'ready' || project.status === 'awaiting_transcript'
@@ -473,6 +486,57 @@ function ProjectCard({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+        )}
+
+        {onDeleteMedia && project.status !== 'uploading' && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            className="mt-2"
+          >
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full gap-2 border-destructive/40 text-destructive hover:bg-destructive/10"
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 className="size-3.5" />
+              Delete media
+            </Button>
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+              <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete this media?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This removes the file from your library and deletes stored video objects, transcripts,
+                    and overlays. This cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={deleting}
+                    onClick={() => {
+                      void (async () => {
+                        setDeleting(true)
+                        try {
+                          await onDeleteMedia(project.id)
+                          setDeleteOpen(false)
+                        } finally {
+                          setDeleting(false)
+                        }
+                      })()
+                    }}
+                  >
+                    {deleting ? 'Deleting…' : 'Delete'}
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         )}
 
@@ -1882,6 +1946,24 @@ function LibraryPageContent() {
     [refetchTree, dispatch],
   )
 
+  const deleteMediaProject = useCallback(
+    async (mediaId: string) => {
+      const res = await fetch(`/api/projects/${mediaId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const msg = await errorMessageFromResponse(res, 'Could not delete media.')
+        toast.error(msg)
+        throw new Error(msg)
+      }
+      dispatch({ type: 'DELETE_PROJECT', id: mediaId })
+      setTree((prev) => {
+        if (!prev) return prev
+        return { ...prev, media: prev.media.filter((m) => m.id !== mediaId) }
+      })
+      toast.success('Media deleted.')
+    },
+    [dispatch],
+  )
+
   const createWorkspace = useCallback(async () => {
     const res = await fetch('/api/workspace-projects', {
       method: 'POST',
@@ -2502,6 +2584,7 @@ function LibraryPageContent() {
                 onRenameTitle={viewerLocked ? undefined : renameMediaProject}
                 onStartTranscription={viewerLocked ? undefined : startTranscriptionForProject}
                 onCancelUpload={viewerLocked ? undefined : cancelUpload}
+                onDeleteMedia={viewerLocked ? undefined : deleteMediaProject}
               />
             ))
           )}

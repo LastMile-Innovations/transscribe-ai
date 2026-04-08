@@ -7,6 +7,7 @@ import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -123,6 +124,20 @@ export function getS3Client(): S3Client {
 
 function bucketName(): string {
   return resolveStorage().bucket
+}
+
+/** Best-effort removal of objects after a project row is deleted. Logs per-key failures. */
+export async function deleteStorageObjectsByKeys(keys: string[]): Promise<void> {
+  const bucket = bucketName()
+  if (!bucket || keys.length === 0) return
+  const client = getS3Client()
+  await Promise.all(
+    keys.map((key) =>
+      client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })).catch((err) => {
+        console.error(`deleteStorageObjectsByKeys: failed for "${key}"`, err)
+      }),
+    ),
+  )
 }
 
 /** Direct object URL using storage endpoint (path-style for MinIO). */
