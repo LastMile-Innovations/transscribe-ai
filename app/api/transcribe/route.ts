@@ -3,16 +3,21 @@ import { AssemblyAI } from 'assemblyai'
 import { db } from '@/lib/db'
 import { transcripts } from '@/lib/db/schema'
 import { requireProjectAccessForRoute } from '@/lib/workspace-access'
+import { buildEditObjectKey } from '@/lib/media-keys'
+import { getObjectBodyStream } from '@/lib/s3-storage'
+
+export const maxDuration = 300
 
 const apiKey = process.env.ASSEMBLYAI_API_KEY || ''
 const client = new AssemblyAI({ apiKey })
 
 export async function POST(request: Request) {
+  let stream: NodeJS.ReadableStream | null = null
   try {
-    const { fileUrl, projectId, options } = await request.json()
+    const { projectId, options } = await request.json()
 
-    if (!fileUrl || !projectId) {
-      return NextResponse.json({ error: 'Missing fileUrl or projectId' }, { status: 400 })
+    if (!projectId) {
+      return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
     }
 
     const access = await requireProjectAccessForRoute(projectId, 'editor')
@@ -22,11 +27,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing AssemblyAI API key' }, { status: 500 })
     }
 
+    const editKey = buildEditObjectKey(access.workspaceProjectId, projectId)
+    stream = await getObjectBodyStream(editKey)
+
     const speechModelsArray =
       options?.speechModel === 'fast' ? ['universal-2'] : ['universal-3-pro', 'universal-2']
 
     const params: Record<string, unknown> = {
-      audio: fileUrl,
+      audio: stream,
       speech_models: speechModelsArray,
       language_detection: options?.languageDetection ?? true,
       speaker_labels: options?.speakerLabels ?? true,
@@ -117,6 +125,9 @@ export async function POST(request: Request) {
     })
   } catch (error) {
     console.error('Error submitting to AssemblyAI:', error)
+    if (stream && typeof (stream as any).destroy === 'function') {
+      ;(stream as any).destroy()
+    }
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

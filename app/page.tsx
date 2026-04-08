@@ -24,6 +24,7 @@ import {
   Trash2,
   Users,
   Menu,
+  Pencil,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/theme-toggle'
@@ -104,15 +105,50 @@ function ProjectCard({
   onOpen,
   folderOptions,
   onMoveToFolder,
+  onRenameTitle,
 }: {
   project: VideoProject
   onOpen: (id: string) => void
   folderOptions?: { id: string | null; label: string }[]
   onMoveToFolder?: (mediaId: string, folderId: string | null) => void
+  onRenameTitle?: (mediaId: string, title: string) => Promise<void>
 }) {
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleValue, setTitleValue] = useState('')
   const { label, variant, icon } = STATUS_CONFIG[project.status]
   const isReady = project.status === 'ready'
   const isProcessing = project.status === 'uploading' || project.status === 'transcribing'
+
+  const startRename = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setTitleValue(project.title)
+    setEditingTitle(true)
+  }
+
+  const commitCardTitle = async () => {
+    const trimmed = titleValue.trim()
+    if (!trimmed) {
+      toast.error('Name is required.')
+      setTitleValue(project.title)
+      setEditingTitle(false)
+      return
+    }
+    if (trimmed === project.title) {
+      setEditingTitle(false)
+      return
+    }
+    if (!onRenameTitle) {
+      setEditingTitle(false)
+      return
+    }
+    try {
+      await onRenameTitle(project.id, trimmed)
+      setEditingTitle(false)
+    } catch {
+      setTitleValue(project.title)
+      setEditingTitle(false)
+    }
+  }
 
   return (
     <div
@@ -160,10 +196,51 @@ function ProjectCard({
 
       {/* Info */}
       <div className="flex flex-1 flex-col gap-2 p-4">
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-balance">
-            {project.title}
-          </h3>
+        <div
+          className="flex items-start justify-between gap-2"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex min-w-0 flex-1 items-start gap-1">
+            {editingTitle ? (
+              <input
+                autoFocus
+                value={titleValue}
+                onChange={(e) => setTitleValue(e.target.value)}
+                onBlur={() => void commitCardTitle()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void commitCardTitle()
+                  }
+                  if (e.key === 'Escape') {
+                    setTitleValue(project.title)
+                    setEditingTitle(false)
+                  }
+                }}
+                className="line-clamp-2 min-w-0 flex-1 rounded border border-brand bg-background px-2 py-0.5 text-sm font-semibold leading-snug outline-none ring-2 ring-brand/30"
+              />
+            ) : (
+              <>
+                <h3 className="line-clamp-2 flex-1 text-sm font-semibold leading-snug text-balance">
+                  {project.title}
+                </h3>
+                {onRenameTitle && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+                    aria-label="Rename project"
+                    title="Rename"
+                    onClick={startRename}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
           <Badge variant={variant} className="shrink-0 gap-1">
             {icon}
             {label}
@@ -867,7 +944,6 @@ function LibraryPageContent() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
-            fileUrl: editFileUrl, 
             projectId: id,
             options: {
               speechModel,
@@ -1020,6 +1096,24 @@ function LibraryPageContent() {
       }
     },
     [refetchTree],
+  )
+
+  const renameMediaProject = useCallback(
+    async (mediaId: string, title: string) => {
+      const res = await fetch(`/api/projects/${mediaId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      })
+      if (!res.ok) {
+        toast.error('Could not rename.')
+        throw new Error('rename failed')
+      }
+      await refetchTree()
+      dispatch({ type: 'UPDATE_PROJECT', id: mediaId, updates: { title } })
+      toast.success('Project renamed.')
+    },
+    [refetchTree, dispatch],
   )
 
   const createWorkspace = useCallback(async () => {
@@ -1615,6 +1709,7 @@ function LibraryPageContent() {
                 onOpen={handleOpen}
                 folderOptions={folderOpts}
                 onMoveToFolder={viewerLocked ? undefined : moveMediaToFolder}
+                onRenameTitle={viewerLocked ? undefined : renameMediaProject}
               />
             ))
           )}

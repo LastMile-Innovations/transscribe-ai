@@ -221,8 +221,8 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
   )
 
   const startNewTranscription = useCallback(async () => {
-    if (!mediaId || !project?.fileUrl) {
-      toast.error('Video file is not available yet.')
+    if (!mediaId || project?.status !== 'ready') {
+      toast.error('Video is not ready for transcription yet.')
       return
     }
     setStartingTranscribe(true)
@@ -231,7 +231,6 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fileUrl: project.fileUrl,
           projectId: mediaId,
           options: {
             speechModel: 'best',
@@ -273,7 +272,7 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
     } finally {
       setStartingTranscribe(false)
     }
-  }, [newLabel, project?.fileUrl, mediaId, switchTranscript])
+  }, [newLabel, project?.status, mediaId, switchTranscript])
 
   const selectValue = state.transcript?.id ?? searchParams.get('t') ?? ''
 
@@ -286,11 +285,30 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
     setEditingTitle(true)
   }
 
-  const commitTitle = () => {
+  const commitTitle = async () => {
     const trimmed = titleValue.trim()
-    if (trimmed && trimmed !== project.title) {
+    if (!trimmed) {
+      toast.error('Name is required.')
+      setTitleValue(project.title)
+      setEditingTitle(false)
+      return
+    }
+    if (trimmed === project.title) {
+      setEditingTitle(false)
+      return
+    }
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      })
+      if (!res.ok) throw new Error('save failed')
       dispatch({ type: 'UPDATE_PROJECT', id: project.id, updates: { title: trimmed } })
       toast.success('Project renamed.')
+    } catch {
+      toast.error('Could not save name.')
+      setTitleValue(project.title)
     }
     setEditingTitle(false)
   }
@@ -363,10 +381,16 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
               autoFocus
               value={titleValue}
               onChange={(e) => setTitleValue(e.target.value)}
-              onBlur={commitTitle}
+              onBlur={() => void commitTitle()}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitTitle()
-                if (e.key === 'Escape') setEditingTitle(false)
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void commitTitle()
+                }
+                if (e.key === 'Escape') {
+                  setTitleValue(project.title)
+                  setEditingTitle(false)
+                }
               }}
               className="min-w-0 flex-1 rounded border border-brand bg-background px-2 py-0.5 text-sm font-medium outline-none ring-2 ring-brand/30"
             />

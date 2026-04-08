@@ -132,6 +132,19 @@ export async function presignPutObject(objectKey: string, contentType: string, e
 }
 
 /** Download object to a file and return SHA-256 (hex) of stored bytes. */
+export async function getObjectBodyStream(key: string): Promise<NodeJS.ReadableStream> {
+  const client = getS3Client()
+  const out = await client.send(
+    new GetObjectCommand({
+      Bucket: bucketName(),
+      Key: key,
+    }),
+  )
+  if (!out.Body) throw new Error('Empty object body')
+  return out.Body as NodeJS.ReadableStream
+}
+
+/** Download object to a file and return SHA-256 (hex) of stored bytes. */
 export async function downloadObjectToFileAndHash(key: string, destPath: string): Promise<string> {
   const client = getS3Client()
   const out = await client.send(

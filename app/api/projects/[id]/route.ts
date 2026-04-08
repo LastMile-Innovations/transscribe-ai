@@ -30,6 +30,15 @@ export async function PATCH(
 
     const body = (await request.json()) as PatchBody
 
+    let titlePatch: string | undefined
+    if (body.title !== undefined) {
+      const t = typeof body.title === 'string' ? body.title.trim() : ''
+      if (!t) {
+        return NextResponse.json({ error: 'title required' }, { status: 400 })
+      }
+      titlePatch = t
+    }
+
     const patch: Partial<{
       fileUrl: string | null
       originalFileUrl: string | null
@@ -51,7 +60,7 @@ export async function PATCH(
         ? { transcriptionProgress: body.transcriptionProgress }
         : {}),
       ...(body.duration !== undefined ? { duration: body.duration } : {}),
-      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(titlePatch !== undefined ? { title: titlePatch } : {}),
       ...(body.thumbnailUrl !== undefined ? { thumbnailUrl: body.thumbnailUrl } : {}),
       ...(body.folderId !== undefined ? { folderId: body.folderId } : {}),
     }
