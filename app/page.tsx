@@ -25,7 +25,10 @@ import {
   Users,
   Menu,
   Pencil,
+  Mic,
+  AlertCircle,
 } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Badge } from '@/components/ui/badge'
@@ -66,6 +69,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useApp } from '@/lib/app-context'
 import type { VideoProject, ProjectStatus, WorkspaceProject, Folder } from '@/lib/types'
+import { errorMessageFromResponse, friendlyHttpMessage } from '@/lib/api-error-message'
 import {
   mediaSummaryLine,
   preferredDurationMs,
@@ -140,6 +144,11 @@ function VaultUploadStats({ up }: { up: NonNullable<VideoProject['uploadProgress
 const STATUS_CONFIG: Record<ProjectStatus, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive'; icon: React.ReactNode }> = {
   ready: { label: 'Ready', variant: 'default', icon: <CheckCircle className="size-3" /> },
   transcribing: { label: 'Transcribing', variant: 'secondary', icon: <Loader2 className="size-3 animate-spin" /> },
+  awaiting_transcript: {
+    label: 'Needs transcript',
+    variant: 'outline',
+    icon: <Mic className="size-3 text-muted-foreground" />,
+  },
   uploading: { label: 'Uploading', variant: 'outline', icon: <Loader2 className="size-3 animate-spin" /> },
   error: { label: 'Error', variant: 'destructive', icon: <XCircle className="size-3" /> },
 }
@@ -150,17 +159,20 @@ function ProjectCard({
   folderOptions,
   onMoveToFolder,
   onRenameTitle,
+  onStartTranscription,
 }: {
   project: VideoProject
   onOpen: (id: string) => void
   folderOptions?: { id: string | null; label: string }[]
   onMoveToFolder?: (mediaId: string, folderId: string | null) => void
   onRenameTitle?: (mediaId: string, title: string) => Promise<void>
+  onStartTranscription?: (mediaId: string) => void
 }) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState('')
   const { label, variant, icon } = STATUS_CONFIG[project.status]
   const isReady = project.status === 'ready'
+  const canOpenInEditor = project.status === 'ready' || project.status === 'awaiting_transcript'
   const isProcessing = project.status === 'uploading' || project.status === 'transcribing'
 
   const startRename = (e: React.MouseEvent) => {
@@ -198,9 +210,11 @@ function ProjectCard({
     <div
       className={cn(
         'group relative flex flex-col overflow-hidden rounded-xl border bg-card transition-all duration-200',
-        isReady ? 'cursor-pointer hover:border-brand/50 hover:shadow-lg hover:shadow-brand/5' : 'cursor-default',
+        canOpenInEditor
+          ? 'cursor-pointer hover:border-brand/50 hover:shadow-lg hover:shadow-brand/5'
+          : 'cursor-default',
       )}
-      onClick={() => isReady && onOpen(project.id)}
+      onClick={() => canOpenInEditor && onOpen(project.id)}
     >
       {/* Thumbnail */}
       <div className="relative aspect-video w-full overflow-hidden bg-muted">
@@ -210,7 +224,7 @@ function ProjectCard({
           className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
         />
         {/* Play overlay */}
-        {isReady && (
+        {canOpenInEditor && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-100 lg:opacity-0 transition-opacity duration-200 lg:group-hover:opacity-100">
             <div className="flex size-14 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-lg">
               <Play className="size-6 translate-x-0.5" />
@@ -222,7 +236,13 @@ function ProjectCard({
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 px-3 py-2 text-center backdrop-blur-sm">
             <Loader2 className="size-8 shrink-0 animate-spin text-brand" />
             <span className="text-sm font-medium text-white">
-              {project.status === 'uploading' ? 'Uploading to vault…' : 'Transcribing with AssemblyAI...'}
+              {project.status === 'uploading'
+                ? 'Uploading to vault…'
+                : project.mediaStep === 'prepare'
+                  ? 'Preparing editor MP4 (transcoding)…'
+                  : project.mediaStep === 'transcribe'
+                    ? 'Transcribing with AssemblyAI…'
+                    : 'Processing…'}
             </span>
             {project.status === 'uploading' && project.uploadProgress ? (
               <VaultUploadStats up={project.uploadProgress} />
@@ -310,10 +330,54 @@ function ProjectCard({
           <span className="truncate font-mono">{project.fileName}</span>
         </div>
 
+        {project.feedbackError ? (
+          <Alert
+            variant={project.status === 'error' ? 'destructive' : 'default'}
+            className={cn(
+              'mt-1 py-2 [&>svg]:size-3.5',
+              project.status !== 'error' && 'border-amber-500/40 bg-amber-500/5 text-foreground',
+            )}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <AlertCircle
+              className={
+                project.status === 'error' ? '' : 'text-amber-600 dark:text-amber-500'
+              }
+            />
+            <AlertTitle className="text-xs font-medium">
+              {project.status === 'error' ? 'Something went wrong' : 'Could not finish transcription'}
+            </AlertTitle>
+            <AlertDescription className="text-xs leading-snug">{project.feedbackError}</AlertDescription>
+          </Alert>
+        ) : null}
+
         {mediaSummaryLine(project) && (
           <p className="line-clamp-2 text-[11px] leading-snug text-muted-foreground/90">
             {mediaSummaryLine(project)}
           </p>
+        )}
+
+        {project.status === 'awaiting_transcript' && onStartTranscription && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            className="mt-2"
+          >
+            <Button
+              type="button"
+              size="sm"
+              className="w-full gap-2"
+              onClick={() => onStartTranscription(project.id)}
+            >
+              <Mic className="size-3.5" />
+              Transcribe with current settings
+            </Button>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Adjust options in <span className="font-medium text-foreground">Transcription Settings</span> above
+              first if needed.
+            </p>
+          </div>
         )}
 
         {folderOptions && onMoveToFolder && (
@@ -343,9 +407,9 @@ function ProjectCard({
           </div>
         )}
 
-        {isReady && (
+        {canOpenInEditor && (
           <div className="mt-1 flex items-center gap-1 text-xs font-medium text-brand opacity-100 lg:opacity-0 transition-opacity lg:group-hover:opacity-100">
-            Open in Editor
+            {project.status === 'awaiting_transcript' ? 'Open preview in editor' : 'Open in Editor'}
             <ChevronRight className="size-3" />
           </div>
         )}
@@ -367,7 +431,7 @@ function EmptyState({ hasFilter }: { hasFilter: boolean }) {
         <p className="mt-1 text-sm text-muted-foreground">
           {hasFilter
             ? 'Try adjusting your search or filter.'
-            : 'Upload a video to get started with transcription.'}
+            : 'Upload a video, then start transcription from the library when you are ready.'}
         </p>
       </div>
     </div>
@@ -568,6 +632,237 @@ function LibraryPageContent() {
       console.error(e)
     }
   }, [wpId])
+
+  const transcriptionBusyRef = useRef<string | null>(null)
+
+  const startTranscriptionForProject = useCallback(
+    async (projectId: string) => {
+      if (viewerLocked) {
+        toast.error('Viewers cannot start transcription.')
+        return
+      }
+      if (transcriptionBusyRef.current) return
+      const proj = tree?.media.find((p) => p.id === projectId)
+      if (!proj || proj.status !== 'awaiting_transcript') {
+        toast.error('That file is not waiting for transcription.')
+        return
+      }
+      transcriptionBusyRef.current = projectId
+
+      const revertToAwaiting = async (feedbackError?: string) => {
+        await fetch(`/api/projects/${projectId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'awaiting_transcript', transcriptionProgress: 0 }),
+        }).catch(() => {})
+        dispatch({
+          type: 'UPDATE_PROJECT',
+          id: projectId,
+          updates: {
+            status: 'awaiting_transcript',
+            transcriptionProgress: 0,
+            mediaStep: undefined,
+            feedbackError,
+          },
+        })
+        setTree((prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            media: prev.media.map((m) =>
+              m.id === projectId
+                ? {
+                    ...m,
+                    status: 'awaiting_transcript',
+                    transcriptionProgress: 0,
+                    mediaStep: undefined,
+                    feedbackError,
+                  }
+                : m,
+            ),
+          }
+        })
+      }
+
+      try {
+        dispatch({
+          type: 'UPDATE_PROJECT',
+          id: projectId,
+          updates: {
+            status: 'transcribing',
+            transcriptionProgress: 50,
+            mediaStep: 'transcribe',
+            feedbackError: undefined,
+          },
+        })
+        setTree((prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            media: prev.media.map((m) =>
+              m.id === projectId
+                ? {
+                    ...m,
+                    status: 'transcribing',
+                    transcriptionProgress: 50,
+                    mediaStep: 'transcribe',
+                    feedbackError: undefined,
+                  }
+                : m,
+            ),
+          }
+        })
+
+        const patchRes = await fetch(`/api/projects/${projectId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'transcribing', transcriptionProgress: 50 }),
+        })
+        if (!patchRes.ok) {
+          const msg = await errorMessageFromResponse(patchRes, 'Could not update project status.')
+          await revertToAwaiting(msg)
+          toast.error('Could not start transcription', { description: msg, duration: 9000 })
+          return
+        }
+
+        const transcribeRes = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId,
+            options: {
+              speechModel,
+              speakerLabels,
+              languageDetection,
+              temperature: temperature[0],
+              keyterms,
+              prompt: customPrompt,
+              speakersExpected: speakersExpected ? parseInt(speakersExpected) : undefined,
+              minSpeakers: minSpeakers ? parseInt(minSpeakers) : undefined,
+              maxSpeakers: maxSpeakers ? parseInt(maxSpeakers) : undefined,
+              knownSpeakers: knownSpeakers,
+              redactPii,
+            },
+          }),
+        })
+
+        if (!transcribeRes.ok) {
+          const msg = await errorMessageFromResponse(transcribeRes, 'Could not start transcription.')
+          await revertToAwaiting(msg)
+          toast.error('Transcription did not start', { description: msg, duration: 9000 })
+          return
+        }
+
+        const transcribeJson = (await transcribeRes.json()) as {
+          assemblyAiId?: string
+          transcriptId?: string
+        }
+        const { assemblyAiId, transcriptId } = transcribeJson
+        if (!assemblyAiId || !transcriptId) {
+          const msg = 'Transcription service returned an incomplete response. Try again.'
+          await revertToAwaiting(msg)
+          toast.error('Transcription did not start', { description: msg, duration: 9000 })
+          return
+        }
+
+        const pollResult = await pollTranscriptionUntilComplete(assemblyAiId, projectId, transcriptId, {
+          onProgress: (pct) => {
+            dispatch({
+              type: 'UPDATE_PROJECT',
+              id: projectId,
+              updates: { transcriptionProgress: pct, mediaStep: 'transcribe' },
+            })
+            setTree((prev) => {
+              if (!prev) return prev
+              return {
+                ...prev,
+                media: prev.media.map((m) =>
+                  m.id === projectId ? { ...m, transcriptionProgress: pct, mediaStep: 'transcribe' } : m,
+                ),
+              }
+            })
+          },
+        })
+
+        if (pollResult.ok) {
+          dispatch({
+            type: 'UPDATE_PROJECT',
+            id: projectId,
+            updates: {
+              status: 'ready',
+              transcriptionProgress: 100,
+              duration: pollResult.duration,
+              mediaStep: undefined,
+              feedbackError: undefined,
+            },
+          })
+          setTree((prev) => {
+            if (!prev) return prev
+            return {
+              ...prev,
+              media: prev.media.map((m) =>
+                m.id === projectId
+                  ? {
+                      ...m,
+                      status: 'ready',
+                      transcriptionProgress: 100,
+                      duration: pollResult.duration,
+                      mediaStep: undefined,
+                      feedbackError: undefined,
+                    }
+                  : m,
+              ),
+            }
+          })
+          await refetchTree()
+          toast.success('Transcription complete', {
+            description: 'Open the editor to review and edit.',
+          })
+          return
+        }
+
+        if (pollResult.reason === 'aborted') {
+          await revertToAwaiting()
+          toast.message('Transcription check stopped', {
+            description: 'Start again when you are ready.',
+          })
+          return
+        }
+
+        const failMsg =
+          pollResult.reason === 'error'
+            ? pollResult.assemblyError?.trim() || 'Transcription failed.'
+            : 'Transcription is taking too long. Try again, or use a shorter clip.'
+        await revertToAwaiting(failMsg)
+        toast.error('Transcription did not complete', { description: failMsg, duration: 12_000 })
+      } catch (err) {
+        console.error('Transcription error:', err)
+        const message =
+          err instanceof Error ? err.message : 'Something went wrong during transcription.'
+        await revertToAwaiting(message)
+        toast.error('Transcription error', { description: message, duration: 10_000 })
+      } finally {
+        transcriptionBusyRef.current = null
+      }
+    },
+    [
+      viewerLocked,
+      tree,
+      dispatch,
+      refetchTree,
+      speechModel,
+      speakerLabels,
+      languageDetection,
+      temperature,
+      keyterms,
+      customPrompt,
+      speakersExpected,
+      minSpeakers,
+      maxSpeakers,
+      knownSpeakers,
+      redactPii,
+    ],
+  )
 
   const fetchWorkspaceMembers = useCallback(async () => {
     if (!wpId) return
@@ -855,7 +1150,10 @@ function LibraryPageContent() {
           contentType: file.type,
         }),
       }).then(async (res) => {
-        if (!res.ok) throw new Error('Failed to get upload URL')
+        if (!res.ok) {
+          const msg = await errorMessageFromResponse(res, 'Failed to get upload URL.')
+          throw new Error(msg)
+        }
         return res.json() as Promise<{ signedUrl: string }>
       })
 
@@ -923,13 +1221,15 @@ function LibraryPageContent() {
         video.onerror = () => finish(60000, thumb)
       })
 
-      const presignData = await presignPromise.catch((e) => {
+      let presignData: { signedUrl: string }
+      try {
+        presignData = await presignPromise
+      } catch (e) {
         console.error('Presign error:', e)
-        return null
-      })
-
-      if (!presignData) {
-        toast.error('Failed to generate secure upload link.')
+        toast.error(
+          e instanceof Error ? e.message : 'Failed to generate secure upload link.',
+          { duration: 8000 },
+        )
         return
       }
       const { signedUrl } = presignData
@@ -968,7 +1268,8 @@ function LibraryPageContent() {
           body: JSON.stringify(newProject),
         })
         if (!insertRes.ok) {
-          throw new Error('Failed to save project to database')
+          const msg = await errorMessageFromResponse(insertRes, 'Failed to save project to the database.')
+          throw new Error(msg)
         }
       } catch (err) {
         console.error('DB Persistence Error:', err)
@@ -977,7 +1278,10 @@ function LibraryPageContent() {
           if (!prev) return prev
           return { ...prev, media: prev.media.filter((m) => m.id !== id) }
         })
-        toast.error('Failed to create project.')
+        toast.error(
+          err instanceof Error ? err.message : 'Failed to create project.',
+          { duration: 8000 },
+        )
         return
       }
 
@@ -986,14 +1290,16 @@ function LibraryPageContent() {
         dispatch({
           type: 'UPDATE_PROJECT',
           id,
-          updates: { status: 'uploading', transcriptionProgress: 10 }
+          updates: { status: 'uploading', transcriptionProgress: 10, mediaStep: 'upload' },
         })
         setTree((prev) => {
           if (!prev) return prev
           return {
             ...prev,
             media: prev.media.map((m) =>
-              m.id === id ? { ...m, status: 'uploading', transcriptionProgress: 10 } : m
+              m.id === id
+                ? { ...m, status: 'uploading', transcriptionProgress: 10, mediaStep: 'upload' }
+                : m,
             ),
           }
         })
@@ -1027,14 +1333,16 @@ function LibraryPageContent() {
             dispatch({
               type: 'UPDATE_PROJECT',
               id,
-              updates: { transcriptionProgress: percent, uploadProgress },
+              updates: { transcriptionProgress: percent, uploadProgress, mediaStep: 'upload' },
             })
             setTree((prev) => {
               if (!prev) return prev
               return {
                 ...prev,
                 media: prev.media.map((m) =>
-                  m.id === id ? { ...m, transcriptionProgress: percent, uploadProgress } : m,
+                  m.id === id
+                    ? { ...m, transcriptionProgress: percent, uploadProgress, mediaStep: 'upload' }
+                    : m,
                 ),
               }
             })
@@ -1044,12 +1352,47 @@ function LibraryPageContent() {
             if (xhr.status >= 200 && xhr.status < 300) {
               resolve()
             } else {
-              reject(new Error('Failed to upload to object storage'))
+              reject(
+                new Error(
+                  xhr.status
+                    ? `Upload to storage failed (HTTP ${xhr.status}). Check file size and try again.`
+                    : 'Upload to storage was rejected. Try again.',
+                ),
+              )
             }
           }
 
-          xhr.onerror = () => reject(new Error('Network error during upload'))
+          xhr.onerror = () =>
+            reject(new Error('Network error during upload. Check your connection and try again.'))
           xhr.send(file)
+        })
+
+        dispatch({
+          type: 'UPDATE_PROJECT',
+          id,
+          updates: {
+            status: 'transcribing',
+            transcriptionProgress: 48,
+            uploadProgress: undefined,
+            mediaStep: 'prepare',
+          },
+        })
+        setTree((prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            media: prev.media.map((m) =>
+              m.id === id
+                ? {
+                    ...m,
+                    status: 'transcribing',
+                    transcriptionProgress: 48,
+                    uploadProgress: undefined,
+                    mediaStep: 'prepare',
+                  }
+                : m,
+            ),
+          }
         })
 
         toast.info('Preparing editor MP4 (hash + transcode)...')
@@ -1068,7 +1411,17 @@ function LibraryPageContent() {
           mediaMetadata?: StoredMediaMetadata
         } | null
         if (!prepRes.ok || !prepBody?.fileUrl) {
-          throw new Error(prepBody?.error || 'Failed to prepare edit asset')
+          const fromApi =
+            prepBody && typeof prepBody.error === 'string' && prepBody.error.trim()
+              ? prepBody.error.trim()
+              : null
+          throw new Error(
+            fromApi ||
+              friendlyHttpMessage(
+                prepRes.status,
+                'Could not prepare the editor video (transcode or storage).',
+              ),
+          )
         }
         const {
           fileUrl: editFileUrl,
@@ -1088,14 +1441,16 @@ function LibraryPageContent() {
           type: 'UPDATE_PROJECT',
           id,
           updates: {
-            status: 'transcribing',
+            status: 'awaiting_transcript',
             fileUrl: editFileUrl,
             originalFileUrl,
             sha256Hash,
             duration: probeDuration,
             mediaMetadata,
-            transcriptionProgress: 50,
+            transcriptionProgress: 0,
             uploadProgress: undefined,
+            mediaStep: undefined,
+            feedbackError: undefined,
           },
         })
         setTree((prev) => {
@@ -1106,95 +1461,46 @@ function LibraryPageContent() {
               m.id === id
                 ? {
                     ...m,
-                    status: 'transcribing',
+                    status: 'awaiting_transcript',
                     fileUrl: editFileUrl,
                     originalFileUrl,
                     sha256Hash,
                     duration: probeDuration,
                     mediaMetadata,
-                    transcriptionProgress: 50,
+                    transcriptionProgress: 0,
                     uploadProgress: undefined,
+                    mediaStep: undefined,
+                    feedbackError: undefined,
                   }
-                : m
+                : m,
             ),
           }
         })
-        
-        // 3. Transcribe from edit MP4 (browser + AssemblyAI–friendly)
-        const transcribeRes = await fetch('/api/transcribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            projectId: id,
-            options: {
-              speechModel,
-              speakerLabels,
-              languageDetection,
-              temperature: temperature[0],
-              keyterms,
-              prompt: customPrompt,
-              speakersExpected: speakersExpected ? parseInt(speakersExpected) : undefined,
-              minSpeakers: minSpeakers ? parseInt(minSpeakers) : undefined,
-              maxSpeakers: maxSpeakers ? parseInt(maxSpeakers) : undefined,
-              knownSpeakers: knownSpeakers,
-              redactPii
-            }
-          })
-        })
 
-        if (!transcribeRes.ok) throw new Error('Failed to initiate transcription')
-        const { assemblyAiId, transcriptId } = await transcribeRes.json()
-
-        const pollResult = await pollTranscriptionUntilComplete(assemblyAiId, id, transcriptId)
-        if (pollResult.ok) {
-          dispatch({
-            type: 'UPDATE_PROJECT',
-            id,
-            updates: {
-              status: 'ready',
-              transcriptionProgress: 100,
-              duration: pollResult.duration,
-            },
-          })
-          setTree((prev) => {
-            if (!prev) return prev
-            return {
-              ...prev,
-              media: prev.media.map((m) =>
-                m.id === id
-                  ? {
-                      ...m,
-                      status: 'ready',
-                      transcriptionProgress: 100,
-                      duration: pollResult.duration,
-                    }
-                  : m
-              ),
-            }
-          })
-          await refetchTree()
-          toast.success('Media added securely and transcribed! Click to open editor.')
-        } else if (pollResult.reason === 'error') {
-          throw new Error(pollResult.assemblyError ?? 'Transcription failed in AssemblyAI')
-        } else if (pollResult.reason === 'timeout') {
-          throw new Error('Transcription timed out')
-        } else {
-          return
-        }
+        await refetchTree()
+        toast.success(
+          'Upload complete. Adjust Transcription Settings if needed, then tap Transcribe on this file.',
+        )
 
       } catch (err) {
         console.error('Upload error:', err)
+        const message =
+          err instanceof Error
+            ? err.message
+            : 'Upload failed. Please check your connection and try again.'
         dispatch({
           type: 'UPDATE_PROJECT',
           id,
-          updates: { status: 'error' },
+          updates: { status: 'error', mediaStep: undefined, feedbackError: message },
         })
         setTree((prev) => {
           if (!prev) return prev
           return {
             ...prev,
             media: prev.media.map((m) =>
-              m.id === id ? { ...m, status: 'error' } : m
+              m.id === id
+                ? { ...m, status: 'error', mediaStep: undefined, feedbackError: message }
+                : m,
             ),
           }
         })
@@ -1203,27 +1509,10 @@ function LibraryPageContent() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'error' }),
         }).catch(() => {})
-        toast.error('Upload failed. Please check your connection.')
+        toast.error('Upload failed', { description: message, duration: 10_000 })
       }
     },
-    [
-      dispatch,
-      wpId,
-      browseFilter,
-      refetchTree,
-      speechModel,
-      speakerLabels,
-      languageDetection,
-      temperature,
-      keyterms,
-      customPrompt,
-      speakersExpected,
-      minSpeakers,
-      maxSpeakers,
-      knownSpeakers,
-      redactPii,
-      myMembership,
-    ],
+    [dispatch, wpId, browseFilter, refetchTree, myMembership],
   )
 
   const onDrop = useCallback(
@@ -1644,7 +1933,7 @@ function LibraryPageContent() {
         <div className="mb-8">
           <h1 className="text-2xl font-bold tracking-tight text-balance">Video Library</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Upload videos to transcribe them automatically with AssemblyAI, then edit in the AI-powered editor.
+            Upload media, tune transcription options, then start AssemblyAI from each file when you are ready.
           </p>
         </div>
 
@@ -1688,7 +1977,7 @@ function LibraryPageContent() {
           </div>
           <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-1.5 text-xs text-muted-foreground">
             <Sparkles className="size-3 text-brand" />
-            Automatic transcription powered by AssemblyAI + AI editing assistant
+            AssemblyAI transcription when you choose — plus AI editing assistant in the editor
           </div>
         </div>
 
@@ -1700,6 +1989,10 @@ function LibraryPageContent() {
                 Transcription Settings
               </AccordionTrigger>
               <AccordionContent className="pb-6">
+                <p className="mb-4 text-xs text-muted-foreground">
+                  These options apply when you click <span className="font-medium text-foreground">Transcribe</span>{' '}
+                  on a file marked “Needs transcript”.
+                </p>
                 <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
                   <div className="flex flex-col gap-6">
                     <div className="flex flex-col gap-3">
@@ -1881,6 +2174,7 @@ function LibraryPageContent() {
               <SelectContent>
                 <SelectItem value="all">All statuses</SelectItem>
                 <SelectItem value="ready">Ready</SelectItem>
+                <SelectItem value="awaiting_transcript">Needs transcript</SelectItem>
                 <SelectItem value="transcribing">Transcribing</SelectItem>
                 <SelectItem value="uploading">Uploading</SelectItem>
                 <SelectItem value="error">Error</SelectItem>
@@ -1905,6 +2199,7 @@ function LibraryPageContent() {
                 folderOptions={folderOpts}
                 onMoveToFolder={viewerLocked ? undefined : moveMediaToFolder}
                 onRenameTitle={viewerLocked ? undefined : renameMediaProject}
+                onStartTranscription={viewerLocked ? undefined : startTranscriptionForProject}
               />
             ))
           )}

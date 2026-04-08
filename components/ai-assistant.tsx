@@ -11,8 +11,11 @@ import {
   Loader2,
   Bot,
   User,
+  AlertCircle,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useApp } from '@/lib/app-context'
 import type { TextOverlay } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -52,10 +55,12 @@ function renderMarkdown(text: string): React.ReactNode[] {
 
 function ToolCallCard({
   toolName,
-  applied,
+  state,
+  errorText,
 }: {
   toolName: string
-  applied: boolean
+  state: string
+  errorText?: string
 }) {
   const ACTION_ICONS: Record<string, string> = {
     editSegment: 'Edit segment',
@@ -65,18 +70,59 @@ function ToolCallCard({
     fixGrammar: 'Fix grammar',
   }
 
+  const doneOk = state === 'output-available'
+  const failed = state === 'output-error'
+  const denied = state === 'output-denied'
+  const inFlight =
+    !doneOk &&
+    !failed &&
+    !denied &&
+    (state === 'input-streaming' ||
+      state === 'input-available' ||
+      state === 'approval-requested' ||
+      state === 'approval-responded')
+
   return (
-    <div className="mt-2 overflow-hidden rounded-lg border border-brand/30 bg-brand/5">
+    <div
+      className={cn(
+        'mt-2 overflow-hidden rounded-lg border bg-muted/30',
+        failed && 'border-destructive/40 bg-destructive/5',
+        doneOk && 'border-brand/30 bg-brand/5',
+        !failed && !doneOk && 'border-border',
+      )}
+    >
       <div className="flex items-center gap-2 px-3 py-2">
-        <Wand2 className="size-3.5 shrink-0 text-brand" />
-        <span className="flex-1 text-xs font-medium text-brand">
+        <Wand2
+          className={cn(
+            'size-3.5 shrink-0',
+            failed ? 'text-destructive' : 'text-brand',
+          )}
+        />
+        <span
+          className={cn(
+            'flex-1 text-xs font-medium',
+            failed ? 'text-destructive' : 'text-brand',
+          )}
+        >
           {ACTION_ICONS[toolName] ?? toolName}
         </span>
+        {inFlight && <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />}
       </div>
-      {applied && (
-        <div className="border-t border-brand/20 px-3 py-2 text-xs flex gap-1 items-center font-semibold uppercase tracking-wider text-green-500">
+      {doneOk && (
+        <div className="flex items-center gap-1 border-t border-brand/20 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-green-600 dark:text-green-500">
           <Check className="size-3" />
-          Execution Applied
+          Execution applied
+        </div>
+      )}
+      {failed && errorText && (
+        <div className="flex items-start gap-1.5 border-t border-destructive/20 px-3 py-2 text-xs text-destructive">
+          <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+          <span className="leading-relaxed">{errorText}</span>
+        </div>
+      )}
+      {denied && (
+        <div className="border-t border-amber-500/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-500">
+          This action was not approved.
         </div>
       )}
     </div>
@@ -120,15 +166,16 @@ function MessageBubble({ message }: { message: UIMessage }) {
           }
           if (isToolUIPart(part)) {
             const name = getToolName(part)
-            const applied =
-              part.state === 'output-available' ||
-              part.state === 'input-available' ||
-              part.state === 'output-error'
+            const errText =
+              part.state === 'output-error' && 'errorText' in part
+                ? part.errorText
+                : undefined
             return (
               <ToolCallCard
                 key={part.toolCallId}
                 toolName={name}
-                applied={applied}
+                state={part.state}
+                errorText={errText}
               />
             )
           }
@@ -247,9 +294,14 @@ export function AIAssistant() {
     [state.transcript, dispatch],
   )
 
-  const { messages, sendMessage, setMessages, status } = useChat({
+  const { messages, sendMessage, setMessages, status, error, clearError } = useChat({
     id: 'transcript-ai-editor',
     transport,
+    onError: (err) => {
+      const message =
+        err instanceof Error ? err.message : 'The assistant could not complete your request.'
+      toast.error(message)
+    },
     onToolCall: ({ toolCall }) => {
       const tc = toolCall as {
         toolName: string
@@ -282,7 +334,13 @@ export function AIAssistant() {
     const t = input.trim()
     if (!t || busy) return
     setInput('')
-    await sendMessage({ text: t })
+    try {
+      await sendMessage({ text: t })
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'The assistant could not complete your request.'
+      toast.error(message)
+    }
   }
 
   const handleSuggestedPrompt = (prompt: string) => {
@@ -366,6 +424,25 @@ export function AIAssistant() {
           void submitMessage()
         }}
       >
+        {error && (
+          <Alert variant="destructive" className="mb-3 pr-10">
+            <AlertCircle />
+            <AlertTitle className="text-sm">Something went wrong</AlertTitle>
+            <AlertDescription className="text-xs">
+              {error.message || 'The assistant could not complete your request.'}
+            </AlertDescription>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="absolute right-2 top-2 size-7"
+              onClick={() => clearError()}
+              aria-label="Dismiss error"
+            >
+              <X className="size-4" />
+            </Button>
+          </Alert>
+        )}
         <div className="relative rounded-xl border border-input bg-muted/30 transition-colors focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/30">
           <textarea
             ref={textareaRef}

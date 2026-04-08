@@ -88,8 +88,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         fileUrl,
         duration: nextDuration,
         mediaMetadata,
-        status: 'transcribing',
-        transcriptionProgress: 50,
+        status: 'awaiting_transcript',
+        transcriptionProgress: 0,
       })
       .where(eq(projects.id, projectId))
       .returning()

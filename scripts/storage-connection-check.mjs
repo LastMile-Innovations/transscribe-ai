@@ -25,10 +25,51 @@ if (minioEndpoint) {
     },
     forcePathStyle: true,
   })
+  function hostLooksPrivate(urlStr) {
+    try {
+      const u = new URL(urlStr)
+      const h = u.hostname.toLowerCase()
+      if (h === 'localhost' || h === '127.0.0.1') return true
+      if (h.endsWith('.railway.internal')) return true
+      if (h.endsWith('.internal')) return true
+      return false
+    } catch {
+      return true
+    }
+  }
+
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }))
     console.log('MinIO connection OK — bucket:', bucket)
     console.log('  endpoint:', minioEndpoint)
+    const pub = minioPublic || ''
+    const explicitBase =
+      process.env.MINIO_PUBLIC_BASE_URL?.replace(/\/$/, '') ||
+      process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, '')
+    const sampleKey = 'workspace/example-project/original/example.mp4'
+    let samplePublic
+    if (explicitBase) {
+      samplePublic = `${explicitBase}/${sampleKey.split('/').map(encodeURIComponent).join('/')}`
+    } else if (pub && bucket) {
+      samplePublic = `${pub}/${bucket}/${sampleKey.split('/').map(encodeURIComponent).join('/')}`
+    }
+    if (samplePublic) {
+      console.log('')
+      console.log('AssemblyAI / browser playback: objects must be reachable at a public HTTPS URL, e.g.')
+      console.log(' ', samplePublic)
+      const httpsCheckBase = explicitBase || pub
+      if (httpsCheckBase && !httpsCheckBase.startsWith('https://')) {
+        console.warn(
+          '  WARNING: Use https:// for the public object base so AssemblyAI can fetch audio_url.',
+        )
+      }
+      if (hostLooksPrivate(httpsCheckBase || '')) {
+        console.warn(
+          '  WARNING: Public base looks local or private. Use a public host for MINIO_PUBLIC_* / MINIO_PUBLIC_BASE_URL;',
+          'otherwise the app streams media through your server to AssemblyAI (slower, more egress).',
+        )
+      }
+    }
   } catch (e) {
     const meta = e.$metadata
     const hint =

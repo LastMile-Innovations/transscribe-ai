@@ -27,11 +27,17 @@ export async function pollTranscriptionUntilComplete(
   assemblyAiId: string,
   projectId: string,
   transcriptId: string,
-  options?: { maxAttempts?: number; signal?: AbortSignal },
+  options?: {
+    maxAttempts?: number
+    signal?: AbortSignal
+    /** Fired when the poll API reports queue/processing progress (50–99). */
+    onProgress?: (transcriptionProgress: number) => void
+  },
 ): Promise<TranscriptionPollResult> {
   const maxAttempts = options?.maxAttempts ?? 100
   const signal = options?.signal
-  let delayMs = 3000
+  const onProgress = options?.onProgress
+  let delayMs = 1500
 
   for (let i = 0; i < maxAttempts; i++) {
     try {
@@ -40,7 +46,7 @@ export async function pollTranscriptionUntilComplete(
       return { ok: false, reason: 'aborted' }
     }
 
-    delayMs = Math.min(30_000, Math.round(delayMs * 1.45))
+    delayMs = Math.min(25_000, Math.round(delayMs * 1.38))
 
     const pollRes = await fetch(`/api/transcribe/${assemblyAiId}`, {
       method: 'POST',
@@ -49,10 +55,38 @@ export async function pollTranscriptionUntilComplete(
       signal,
     })
 
-    const pollData = (await pollRes.json()) as {
+    let pollData: {
       status?: string
       duration?: number
       error?: string
+      transcriptionProgress?: number
+    }
+    try {
+      pollData = (await pollRes.json()) as typeof pollData
+    } catch {
+      pollData = {}
+    }
+
+    if (!pollRes.ok) {
+      const hint =
+        typeof pollData.error === 'string' && pollData.error.trim()
+          ? pollData.error.trim()
+          : pollRes.status >= 500
+            ? 'Could not check transcription status (server error).'
+            : 'Could not check transcription status.'
+      return {
+        ok: false,
+        reason: 'error',
+        assemblyError: hint,
+      }
+    }
+
+    if (
+      typeof pollData.transcriptionProgress === 'number' &&
+      pollData.transcriptionProgress > 0 &&
+      onProgress
+    ) {
+      onProgress(pollData.transcriptionProgress)
     }
 
     if (pollData.status === 'completed') {

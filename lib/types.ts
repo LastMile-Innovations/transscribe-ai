@@ -33,6 +33,10 @@ export interface VideoProject {
   /** ffprobe payloads + derived summary (original vault file + edit MP4). */
   mediaMetadata?: StoredMediaMetadata | null
   transcriptionProgress: number // 0–100
+  /** Client-only pipeline step for clearer UX; not persisted. */
+  mediaStep?: 'upload' | 'prepare' | 'transcribe'
+  /** Client-only last error message for inline/card feedback; not persisted. */
+  feedbackError?: string
   /** Client-only while uploading to storage; not persisted. */
   uploadProgress?: {
     loaded: number

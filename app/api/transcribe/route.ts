@@ -4,7 +4,12 @@ import { db } from '@/lib/db'
 import { transcripts } from '@/lib/db/schema'
 import { requireProjectAccessForRoute } from '@/lib/workspace-access'
 import { buildEditObjectKey } from '@/lib/media-keys'
-import { getObjectBodyStream, publicObjectUrl } from '@/lib/s3-storage'
+import {
+  getObjectBodyStream,
+  objectUrlUnreachableFromAssemblyAi,
+  presignGetObject,
+  publicObjectUrl,
+} from '@/lib/s3-storage'
 
 export const maxDuration = 300
 
@@ -29,7 +34,27 @@ export async function POST(request: Request) {
     }
 
     const editKey = buildEditObjectKey(access.workspaceProjectId, projectId)
-    const publicUrl = publicObjectUrl(editKey)
+
+    const urlMode = (process.env.MINIO_TRANSCRIPTION_URL_MODE || 'public').toLowerCase()
+    const presignExpires = Number(process.env.MINIO_TRANSCRIPTION_PRESIGN_EXPIRES_SEC) || 172800
+
+    let resolvedAudioUrl: string | null = null
+    if (urlMode === 'presigned') {
+      try {
+        const signed = await presignGetObject(editKey, presignExpires)
+        if (!objectUrlUnreachableFromAssemblyAi(signed)) {
+          resolvedAudioUrl = signed
+        }
+      } catch (e) {
+        console.error('presignGetObject for transcription failed:', e)
+      }
+    }
+    if (resolvedAudioUrl == null) {
+      const pub = publicObjectUrl(editKey)
+      if (pub && !objectUrlUnreachableFromAssemblyAi(pub)) {
+        resolvedAudioUrl = pub
+      }
+    }
 
     const speechModelsArray =
       options?.speechModel === 'fast' ? ['universal-2'] : ['universal-3-pro', 'universal-2']
@@ -45,11 +70,28 @@ export async function POST(request: Request) {
       params.temperature = options?.temperature ?? 0.1
     }
 
-    if (publicUrl && !publicUrl.includes('localhost') && !publicUrl.includes('127.0.0.1')) {
-      params.audio_url = publicUrl
+    if (resolvedAudioUrl) {
+      params.audio_url = resolvedAudioUrl
     } else {
+      if (process.env.NODE_ENV === 'production') {
+        console.warn(
+          '[transcribe] Falling back to streaming audio from object storage to AssemblyAI. ' +
+            'Set MINIO_PUBLIC_ENDPOINT / MINIO_PUBLIC_BASE_URL to a public HTTPS host, or use MINIO_TRANSCRIPTION_URL_MODE=presigned.',
+        )
+      }
       stream = await getObjectBodyStream(editKey)
       params.audio = stream
+    }
+
+    const webhookUrl = process.env.ASSEMBLYAI_WEBHOOK_URL?.trim()
+    if (webhookUrl) {
+      params.webhook_url = webhookUrl
+      const whSecret = process.env.ASSEMBLYAI_WEBHOOK_SECRET?.trim()
+      if (whSecret) {
+        params.webhook_auth_header_name =
+          process.env.ASSEMBLYAI_WEBHOOK_AUTH_HEADER_NAME?.trim() || 'X-AssemblyAI-Webhook-Secret'
+        params.webhook_auth_header_value = whSecret
+      }
     }
 
     const keytermsInput = options?.keyterms as string | undefined

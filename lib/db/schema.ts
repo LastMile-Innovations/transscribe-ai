@@ -16,6 +16,7 @@ import {
 export const projectStatusEnum = pgEnum('project_status', [
   'uploading',
   'transcribing',
+  'awaiting_transcript',
   'ready',
   'error',
 ])

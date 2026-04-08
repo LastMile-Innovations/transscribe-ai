@@ -1,0 +1,1 @@
+ALTER TYPE "public"."project_status" ADD VALUE 'awaiting_transcript' BEFORE 'ready';

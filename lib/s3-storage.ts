@@ -101,6 +101,21 @@ export function publicObjectUrl(key: string): string {
   return internalObjectUrl(key)
 }
 
+/** True when the URL host is only reachable locally (AssemblyAI cannot fetch it). */
+export function objectUrlUnreachableFromAssemblyAi(url: string): boolean {
+  try {
+    const u = new URL(url)
+    const host = u.hostname.toLowerCase()
+    if (host === 'localhost' || host === '127.0.0.1') return true
+    if (host.endsWith('.local')) return true
+    if (host.endsWith('.railway.internal')) return true
+    if (host.endsWith('.internal')) return true
+    return false
+  } catch {
+    return true
+  }
+}
+
 export async function presignPutObject(objectKey: string, contentType: string, expiresIn = 3600) {
   const minioPublic = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
   if (minioPublic) {
@@ -127,6 +142,38 @@ export async function presignPutObject(objectKey: string, contentType: string, e
     Bucket: bucketName(),
     Key: objectKey,
     ContentType: contentType,
+  })
+  return getSignedUrl(client, command, { expiresIn })
+}
+
+/**
+ * Presigned GET for a single object. Signed against the public MinIO host when set (same as presigned PUT),
+ * so AssemblyAI can fetch the file without anonymous bucket policy.
+ */
+export async function presignGetObject(objectKey: string, expiresIn = 172800) {
+  const minioPublic = process.env.MINIO_PUBLIC_ENDPOINT?.replace(/\/$/, '')
+  if (minioPublic) {
+    const bucket = process.env.MINIO_BUCKET || ''
+    const presignClient = new S3Client({
+      region: process.env.MINIO_REGION || 'us-east-1',
+      endpoint: minioPublic,
+      credentials: {
+        accessKeyId: process.env.MINIO_ROOT_USER || '',
+        secretAccessKey: process.env.MINIO_ROOT_PASSWORD || '',
+      },
+      forcePathStyle: true,
+    })
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: objectKey,
+    })
+    return getSignedUrl(presignClient, command, { expiresIn })
+  }
+
+  const client = getS3Client()
+  const command = new GetObjectCommand({
+    Bucket: bucketName(),
+    Key: objectKey,
   })
   return getSignedUrl(client, command, { expiresIn })
 }

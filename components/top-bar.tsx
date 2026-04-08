@@ -50,6 +50,7 @@ import { Label } from '@/components/ui/label'
 import { useApp } from '@/lib/app-context'
 import { getProjectData, listTranscriptsForMediaAction } from '@/lib/actions'
 import { preferredDurationMs, resolutionLabel } from '@/lib/media-metadata'
+import { errorMessageFromResponse } from '@/lib/api-error-message'
 import { pollTranscriptionUntilComplete } from '@/lib/transcription-poll-client'
 import type { TranscriptSummary, VideoProject } from '@/lib/types'
 
@@ -274,7 +275,7 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
   )
 
   const startNewTranscription = useCallback(async () => {
-    if (!mediaId || project?.status !== 'ready') {
+    if (!mediaId || (project?.status !== 'ready' && project?.status !== 'awaiting_transcript')) {
       toast.error('Video is not ready for transcription yet.')
       return
     }
@@ -294,8 +295,18 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
           },
         }),
       })
-      if (!transcribeRes.ok) throw new Error('start failed')
-      const { assemblyAiId, transcriptId } = await transcribeRes.json()
+      if (!transcribeRes.ok) {
+        const msg = await errorMessageFromResponse(transcribeRes, 'Could not start transcription.')
+        throw new Error(msg)
+      }
+      const body = (await transcribeRes.json()) as {
+        assemblyAiId?: string
+        transcriptId?: string
+      }
+      const { assemblyAiId, transcriptId } = body
+      if (!assemblyAiId || !transcriptId) {
+        throw new Error('Transcription service returned an incomplete response.')
+      }
 
       const pollResult = await pollTranscriptionUntilComplete(assemblyAiId, mediaId, transcriptId)
       if (pollResult.ok) {
@@ -303,18 +314,24 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
         await switchTranscript(transcriptId)
         toast.success('New transcript ready.')
       } else if (pollResult.reason === 'error') {
-        toast.error(pollResult.assemblyError ?? 'Transcription failed.')
+        const desc = pollResult.assemblyError?.trim() || 'Transcription failed.'
+        toast.error('Transcription did not complete', { description: desc, duration: 10_000 })
         return
       } else if (pollResult.reason === 'timeout') {
-        toast.error('Transcription timed out.')
+        toast.error('Transcription timed out', {
+          description: 'Try again or use a shorter recording.',
+          duration: 10_000,
+        })
         return
       } else {
+        toast.message('Transcription check stopped')
         return
       }
       setNewDialogOpen(false)
       setNewLabel('')
-    } catch {
-      toast.error('Transcription failed.')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Transcription failed.'
+      toast.error('Transcription failed', { description: msg, duration: 10_000 })
     } finally {
       setStartingTranscribe(false)
     }
