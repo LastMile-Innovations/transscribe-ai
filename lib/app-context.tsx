@@ -66,6 +66,16 @@ function appReducer(state: AppState, action: AppAction): AppState {
         trimRange: { start: 0, end: action.transcript.totalDuration },
       }
 
+    case 'SET_TRANSCRIPT_SEGMENTS':
+      if (!state.transcript) return state
+      return {
+        ...state,
+        transcript: {
+          ...state.transcript,
+          segments: action.segments,
+        },
+      }
+
     case 'UPDATE_SEGMENT':
       if (!state.transcript) return state
       return {

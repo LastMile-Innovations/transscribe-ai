@@ -32,11 +32,14 @@ export async function pollTranscriptionUntilComplete(
     signal?: AbortSignal
     /** Fired when the poll API reports queue/processing progress (50–99). */
     onProgress?: (transcriptionProgress: number) => void
+    /** Override fetch (e.g. Clerk-authenticated client fetch). */
+    fetchImpl?: typeof fetch
   },
 ): Promise<TranscriptionPollResult> {
   const maxAttempts = options?.maxAttempts ?? 100
   const signal = options?.signal
   const onProgress = options?.onProgress
+  const fetchImpl = options?.fetchImpl ?? fetch
   let delayMs = 1500
 
   for (let i = 0; i < maxAttempts; i++) {
@@ -48,7 +51,7 @@ export async function pollTranscriptionUntilComplete(
 
     delayMs = Math.min(25_000, Math.round(delayMs * 1.38))
 
-    const pollRes = await fetch(`/api/transcribe/${assemblyAiId}`, {
+    const pollRes = await fetchImpl(`/api/transcribe/${assemblyAiId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId, transcriptId }),

@@ -58,12 +58,15 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { useAuthedFetch } from '@/lib/authed-fetch'
 import { useApp } from '@/lib/app-context'
 import { getProjectData, listTranscriptsForMediaAction } from '@/lib/actions'
 import { preferredDurationMs, resolutionLabel } from '@/lib/media-metadata'
-import { errorMessageFromResponse } from '@/lib/api-error-message'
-import { pollTranscriptionUntilComplete } from '@/lib/transcription-poll-client'
+import { runTranscriptionFlow } from '@/lib/transcription-client'
+import { DEFAULT_TRANSCRIPTION_OPTIONS } from '@/lib/transcription-options'
 import type { TranscriptSummary, VideoProject } from '@/lib/types'
+import { cn } from '@/lib/utils'
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000)
@@ -245,6 +248,7 @@ function MediaMetadataDialog({
 export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const authedFetch = useAuthedFetch()
   const { state, dispatch } = useApp()
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState('')
@@ -254,6 +258,11 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
   const [newLabel, setNewLabel] = useState('')
   const [startingTranscribe, setStartingTranscribe] = useState(false)
   const [mediaInfoOpen, setMediaInfoOpen] = useState(false)
+  const [rerunSpeechModel, setRerunSpeechModel] = useState(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
+  const [rerunSpeakerLabels, setRerunSpeakerLabels] = useState(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
+  const [rerunLanguageDetection, setRerunLanguageDetection] = useState(
+    DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection,
+  )
 
   const project = state.projects.find((p) => p.id === state.activeProjectId)
   const mediaId = project?.id
@@ -278,6 +287,15 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
       cancelled = true
     }
   }, [mediaId])
+
+  useEffect(() => {
+    if (!newDialogOpen) {
+      setNewLabel('')
+      setRerunSpeechModel(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
+      setRerunSpeakerLabels(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
+      setRerunLanguageDetection(DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection)
+    }
+  }, [newDialogOpen])
 
   const switchTranscript = useCallback(
     async (transcriptId: string) => {
@@ -309,45 +327,28 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
     }
     setStartingTranscribe(true)
     try {
-      const transcribeRes = await fetch('/api/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: mediaId,
-          options: {
-            speechModel: 'best',
-            speakerLabels: true,
-            languageDetection: true,
-            temperature: 0.1,
-            transcriptLabel: newLabel.trim() || undefined,
-          },
-        }),
+      const result = await runTranscriptionFlow({
+        projectId: mediaId,
+        fetchImpl: authedFetch,
+        options: {
+          speechModel: rerunSpeechModel,
+          speakerLabels: rerunSpeakerLabels,
+          languageDetection: rerunLanguageDetection,
+          temperature: DEFAULT_TRANSCRIPTION_OPTIONS.temperature,
+          transcriptLabel: newLabel.trim() || undefined,
+        },
       })
-      if (!transcribeRes.ok) {
-        const msg = await errorMessageFromResponse(transcribeRes, 'Could not start transcription.')
-        throw new Error(msg)
-      }
-      const body = (await transcribeRes.json()) as {
-        assemblyAiId?: string
-        transcriptId?: string
-      }
-      const { assemblyAiId, transcriptId } = body
-      if (!assemblyAiId || !transcriptId) {
-        throw new Error('Transcription service returned an incomplete response.')
-      }
 
-      const pollResult = await pollTranscriptionUntilComplete(assemblyAiId, mediaId, transcriptId)
-      if (pollResult.ok) {
+      if (result.ok) {
         setTranscriptList(await listTranscriptsForMediaAction(mediaId))
-        await switchTranscript(transcriptId)
+        await switchTranscript(result.transcriptId)
         toast.success('New transcript ready.')
-      } else if (pollResult.reason === 'error') {
-        const desc = pollResult.assemblyError?.trim() || 'Transcription failed.'
-        toast.error('Transcription did not complete', { description: desc, duration: 10_000 })
+      } else if (result.reason === 'error' || result.reason === 'start_error') {
+        toast.error('Transcription did not complete', { description: result.message, duration: 10_000 })
         return
-      } else if (pollResult.reason === 'timeout') {
+      } else if (result.reason === 'timeout') {
         toast.error('Transcription timed out', {
-          description: 'Try again or use a shorter recording.',
+          description: result.message,
           duration: 10_000,
         })
         return
@@ -363,13 +364,36 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
     } finally {
       setStartingTranscribe(false)
     }
-  }, [newLabel, project?.mediaMetadata?.editKey, project?.status, mediaId, switchTranscript])
+  }, [
+    mediaId,
+    newLabel,
+    project?.mediaMetadata?.editKey,
+    project?.status,
+    rerunLanguageDetection,
+    rerunSpeakerLabels,
+    rerunSpeechModel,
+    switchTranscript,
+    authedFetch,
+  ])
 
   const selectValue = state.transcript?.id ?? searchParams.get('t') ?? ''
 
   if (!project) return null
 
   const libraryHref = project.workspaceProjectId ? `/?wp=${project.workspaceProjectId}` : '/'
+
+  const applyRerunPreset = (preset: 'best' | 'fast') => {
+    if (preset === 'fast') {
+      setRerunSpeechModel('fast')
+      setRerunSpeakerLabels(false)
+      setRerunLanguageDetection(true)
+      return
+    }
+
+    setRerunSpeechModel('best')
+    setRerunSpeakerLabels(true)
+    setRerunLanguageDetection(true)
+  }
 
   const handleTitleClick = () => {
     setTitleValue(project.title)
@@ -389,7 +413,7 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
       return
     }
     try {
-      const res = await fetch(`/api/projects/${project.id}`, {
+      const res = await authedFetch(`/api/projects/${project.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: trimmed }),
@@ -650,12 +674,20 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
                 <kbd className="rounded bg-muted px-1.5 font-mono">Space</kbd>
               </div>
               <div className="flex justify-between">
+                <span className="text-muted-foreground">Play / Pause while typing</span>
+                <kbd className="rounded bg-muted px-1.5 font-mono">Alt+Space</kbd>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-muted-foreground">Skip back 5s</span>
                 <kbd className="rounded bg-muted px-1.5 font-mono">J</kbd>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Skip forward 5s</span>
                 <kbd className="rounded bg-muted px-1.5 font-mono">L</kbd>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Seek while typing</span>
+                <kbd className="rounded bg-muted px-1.5 font-mono">Alt+J / Alt+L</kbd>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Search transcript</span>
@@ -788,15 +820,79 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             Runs AssemblyAI again on this video and saves an additional transcript you can switch between.
-            Uses the default &quot;Universal-3 Pro&quot; model. To customize settings, go back to the Library.
+            These rerun settings now match the same common controls used in the Library.
           </p>
-          <div className="flex flex-col gap-2 py-2">
+          <div className="flex flex-col gap-4 py-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => applyRerunPreset('best')}
+                className={cn(
+                  'rounded-lg border p-3 text-left transition-colors',
+                  rerunSpeechModel === 'best' && rerunSpeakerLabels
+                    ? 'border-brand bg-brand/5'
+                    : 'border-border hover:border-brand/40',
+                )}
+              >
+                <p className="text-sm font-medium">Best accuracy</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Best for speaker-heavy or terminology-heavy recordings.
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyRerunPreset('fast')}
+                className={cn(
+                  'rounded-lg border p-3 text-left transition-colors',
+                  rerunSpeechModel === 'fast' && !rerunSpeakerLabels
+                    ? 'border-brand bg-brand/5'
+                    : 'border-border hover:border-brand/40',
+                )}
+              >
+                <p className="text-sm font-medium">Fast review</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Faster reruns when you mainly need clean text quickly.
+                </p>
+              </button>
+            </div>
             <Label>Optional label</Label>
             <Input
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
               placeholder="e.g. Re-run, Spanish"
             />
+            <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              {rerunSpeechModel === 'best'
+                ? 'Using the highest accuracy model.'
+                : 'Using the fast model for quicker turnaround.'}{' '}
+              {rerunSpeakerLabels ? 'Speaker labels are on.' : 'Speaker labels are off.'}
+            </div>
+            <div className="space-y-2">
+              <Label>Speech model</Label>
+              <Select value={rerunSpeechModel} onValueChange={(value: 'best' | 'fast') => setRerunSpeechModel(value)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="best">Universal-3 Pro (Highest Accuracy)</SelectItem>
+                  <SelectItem value="fast">Universal-2 (Fastest)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-col gap-1">
+                <Label>Speaker labels</Label>
+                <p className="text-xs text-muted-foreground">Identify who is speaking for easier editing.</p>
+              </div>
+              <Switch checked={rerunSpeakerLabels} onCheckedChange={setRerunSpeakerLabels} />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-col gap-1">
+                <Label>Language detection</Label>
+                <p className="text-xs text-muted-foreground">Auto-detect the primary spoken language.</p>
+              </div>
+              <Switch checked={rerunLanguageDetection} onCheckedChange={setRerunLanguageDetection} />
+            </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" onClick={() => setNewDialogOpen(false)} disabled={startingTranscribe}>

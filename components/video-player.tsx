@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
+import { useAuthedFetch } from '@/lib/authed-fetch'
 import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
 
@@ -32,6 +33,7 @@ function waveBarHeight(index: number, total: number): number {
 const PLAYBACK_URL_REFRESH_BUFFER_MS = 5 * 60 * 1000
 
 export function VideoPlayer() {
+  const authedFetch = useAuthedFetch()
   const { state, dispatch } = useApp()
   const videoRef = useRef<HTMLVideoElement>(null)
   const [volume, setVolume] = useState(80)
@@ -61,7 +63,7 @@ export function VideoPlayer() {
 
       if (refreshInFlightRef.current) return refreshInFlightRef.current
 
-      const task = fetch(`/api/projects/${project.id}/playback-url`)
+      const task = authedFetch(`/api/projects/${project.id}/playback-url`)
         .then(async (res) => {
           if (!res.ok) throw new Error('Could not refresh playback URL.')
           return res.json() as Promise<{
@@ -91,7 +93,7 @@ export function VideoPlayer() {
       refreshInFlightRef.current = task
       return task
     },
-    [dispatch, project],
+    [authedFetch, dispatch, project],
   )
 
   // Global seek listener

@@ -1,6 +1,7 @@
 'use client'
 
 import { useUser, UserButton, SignInButton, SignUpButton, Show } from '@clerk/nextjs'
+import { useAuthedFetch } from '@/lib/authed-fetch'
 import { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
@@ -86,7 +87,11 @@ import {
 } from '@/lib/media-metadata'
 import { buildClientMediaCapture } from '@/lib/client-media-capture'
 import { buildOriginalUploadKey } from '@/lib/media-keys'
-import { pollTranscriptionUntilComplete } from '@/lib/transcription-poll-client'
+import { runTranscriptionFlow } from '@/lib/transcription-client'
+import {
+  DEFAULT_TRANSCRIPTION_OPTIONS,
+  DEFAULT_TRANSCRIPTION_PROMPT,
+} from '@/lib/transcription-options'
 import { cn } from '@/lib/utils'
 
 type UploadHandle = {
@@ -698,6 +703,7 @@ function LibraryPageContent() {
   const searchParams = useSearchParams()
   const wpId = searchParams.get('wp')
   const { user } = useUser()
+  const authedFetch = useAuthedFetch()
   const { state, dispatch } = useApp()
 
   const [search, setSearch] = useState('')
@@ -758,12 +764,12 @@ function LibraryPageContent() {
   const viewerLocked = myMembership !== null && myMembership.role === 'viewer'
 
   // Transcription Settings State
-  const [speechModel, setSpeechModel] = useState<string>('best')
-  const [speakerLabels, setSpeakerLabels] = useState(true)
-  const [languageDetection, setLanguageDetection] = useState(true)
-  const [temperature, setTemperature] = useState([0.1])
+  const [speechModel, setSpeechModel] = useState<string>(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
+  const [speakerLabels, setSpeakerLabels] = useState(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
+  const [languageDetection, setLanguageDetection] = useState(DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection)
+  const [temperature, setTemperature] = useState([DEFAULT_TRANSCRIPTION_OPTIONS.temperature])
   const [keyterms, setKeyterms] = useState('')
-  const [customPrompt, setCustomPrompt] = useState('Mandatory: Transcribe legal proceedings and evidentiary files with precise terminology intact. Preserve all profanity exactly as spoken. Required: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms. Strict requirement: Always transcribe speech exactly as heard. If uncertain or audio is unclear, mark as [unclear] instead of guessing. Non-negotiable: Distinguish between speakers through clear role-based attribution. Label participants by role when identifiable (judge, counsel, witness). Mark overlapping speech as [CROSSTALK].')
+  const [customPrompt, setCustomPrompt] = useState(DEFAULT_TRANSCRIPTION_PROMPT)
 
   // Advanced Speaker State
   const [speakersExpected, setSpeakersExpected] = useState<string>('')
@@ -776,7 +782,7 @@ function LibraryPageContent() {
   const refetchTree = useCallback(async () => {
     if (!wpId) return
     try {
-      const res = await fetch(`/api/workspace-projects/${wpId}/tree`)
+      const res = await authedFetch(`/api/workspace-projects/${wpId}/tree`)
       if (!res.ok) return
       const data = await res.json()
       setTree({
@@ -790,7 +796,7 @@ function LibraryPageContent() {
     } catch (e) {
       console.error(e)
     }
-  }, [wpId])
+  }, [wpId, authedFetch])
 
   const transcriptionBusyRef = useRef<string | null>(null)
 
@@ -810,7 +816,7 @@ function LibraryPageContent() {
       transcriptionBusyRef.current = projectId
 
       const revertToAwaiting = async (feedbackError?: string) => {
-        await fetch(`/api/projects/${projectId}`, {
+        await authedFetch(`/api/projects/${projectId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'awaiting_transcript', transcriptionProgress: 0 }),
@@ -873,7 +879,7 @@ function LibraryPageContent() {
           }
         })
 
-        const patchRes = await fetch(`/api/projects/${projectId}`, {
+        const patchRes = await authedFetch(`/api/projects/${projectId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'transcribing', transcriptionProgress: 50 }),
@@ -885,47 +891,22 @@ function LibraryPageContent() {
           return
         }
 
-        const transcribeRes = await fetch('/api/transcribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projectId,
-            options: {
-              speechModel,
-              speakerLabels,
-              languageDetection,
-              temperature: temperature[0],
-              keyterms,
-              prompt: customPrompt,
-              speakersExpected: speakersExpected ? parseInt(speakersExpected) : undefined,
-              minSpeakers: minSpeakers ? parseInt(minSpeakers) : undefined,
-              maxSpeakers: maxSpeakers ? parseInt(maxSpeakers) : undefined,
-              knownSpeakers: knownSpeakers,
-              redactPii,
-            },
-          }),
-        })
-
-        if (!transcribeRes.ok) {
-          const msg = await errorMessageFromResponse(transcribeRes, 'Could not start transcription.')
-          await revertToAwaiting(msg)
-          toast.error('Transcription did not start', { description: msg, duration: 9000 })
-          return
-        }
-
-        const transcribeJson = (await transcribeRes.json()) as {
-          assemblyAiId?: string
-          transcriptId?: string
-        }
-        const { assemblyAiId, transcriptId } = transcribeJson
-        if (!assemblyAiId || !transcriptId) {
-          const msg = 'Transcription service returned an incomplete response. Try again.'
-          await revertToAwaiting(msg)
-          toast.error('Transcription did not start', { description: msg, duration: 9000 })
-          return
-        }
-
-        const pollResult = await pollTranscriptionUntilComplete(assemblyAiId, projectId, transcriptId, {
+        const result = await runTranscriptionFlow({
+          projectId,
+          fetchImpl: authedFetch,
+          options: {
+            speechModel: speechModel === 'fast' ? 'fast' : 'best',
+            speakerLabels,
+            languageDetection,
+            temperature: temperature[0],
+            keyterms,
+            prompt: customPrompt,
+            speakersExpected: speakersExpected ? parseInt(speakersExpected, 10) : undefined,
+            minSpeakers: minSpeakers ? parseInt(minSpeakers, 10) : undefined,
+            maxSpeakers: maxSpeakers ? parseInt(maxSpeakers, 10) : undefined,
+            knownSpeakers,
+            redactPii,
+          },
           onProgress: (pct) => {
             dispatch({
               type: 'UPDATE_PROJECT',
@@ -944,14 +925,14 @@ function LibraryPageContent() {
           },
         })
 
-        if (pollResult.ok) {
+        if (result.ok) {
           dispatch({
             type: 'UPDATE_PROJECT',
             id: projectId,
             updates: {
               status: 'ready',
               transcriptionProgress: 100,
-              duration: pollResult.duration,
+              duration: result.duration,
               mediaStep: undefined,
               feedbackError: undefined,
             },
@@ -966,7 +947,7 @@ function LibraryPageContent() {
                       ...m,
                       status: 'ready',
                       transcriptionProgress: 100,
-                      duration: pollResult.duration,
+                      duration: result.duration,
                       mediaStep: undefined,
                       feedbackError: undefined,
                     }
@@ -981,7 +962,7 @@ function LibraryPageContent() {
           return
         }
 
-        if (pollResult.reason === 'aborted') {
+        if (result.reason === 'aborted') {
           await revertToAwaiting()
           toast.message('Transcription check stopped', {
             description: 'Start again when you are ready.',
@@ -989,10 +970,7 @@ function LibraryPageContent() {
           return
         }
 
-        const failMsg =
-          pollResult.reason === 'error'
-            ? pollResult.assemblyError?.trim() || 'Transcription failed.'
-            : 'Transcription is taking too long. Try again, or use a shorter clip.'
+        const failMsg = result.message
         await revertToAwaiting(failMsg)
         toast.error('Transcription did not complete', { description: failMsg, duration: 12_000 })
       } catch (err) {
@@ -1022,6 +1000,7 @@ function LibraryPageContent() {
       maxSpeakers,
       knownSpeakers,
       redactPii,
+      authedFetch,
     ],
   )
 
@@ -1029,7 +1008,7 @@ function LibraryPageContent() {
     if (!wpId) return
     setMembersLoading(true)
     try {
-      const res = await fetch(`/api/workspace-projects/${wpId}/members`)
+      const res = await authedFetch(`/api/workspace-projects/${wpId}/members`)
       if (!res.ok) throw new Error('failed')
       const data = (await res.json()) as WorkspaceMemberRow[]
       setMembers(data)
@@ -1038,7 +1017,7 @@ function LibraryPageContent() {
     } finally {
       setMembersLoading(false)
     }
-  }, [wpId])
+  }, [wpId, authedFetch])
 
   useEffect(() => {
     if (!wpId) {
@@ -1075,7 +1054,7 @@ function LibraryPageContent() {
     setMemberSearchLoading(true)
     void (async () => {
       try {
-        const res = await fetch(
+        const res = await authedFetch(
           `/api/workspace-projects/${wpId}/members/search?q=${encodeURIComponent(debouncedInviteQuery.trim())}`,
           { signal: ac.signal },
         )
@@ -1096,12 +1075,12 @@ function LibraryPageContent() {
       }
     })()
     return () => ac.abort()
-  }, [debouncedInviteQuery, shareOpen, wpId, isWorkspaceOwner])
+  }, [debouncedInviteQuery, shareOpen, wpId, isWorkspaceOwner, authedFetch])
 
   const postAddMember = useCallback(
     async (body: Record<string, unknown>) => {
       if (!wpId) throw new Error('No workspace selected')
-      const res = await fetch(`/api/workspace-projects/${wpId}/members`, {
+      const res = await authedFetch(`/api/workspace-projects/${wpId}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...body, role: inviteRole }),
@@ -1117,7 +1096,7 @@ function LibraryPageContent() {
       setInviteUserId('')
       await fetchWorkspaceMembers()
     },
-    [wpId, inviteRole, fetchWorkspaceMembers],
+    [wpId, inviteRole, fetchWorkspaceMembers, authedFetch],
   )
 
   const inviteWorkspaceMemberByEmail = useCallback(
@@ -1176,7 +1155,7 @@ function LibraryPageContent() {
       if (!wpId) return
       if (!confirm('Remove this person from the workspace?')) return
       try {
-        const res = await fetch(
+        const res = await authedFetch(
           `/api/workspace-projects/${wpId}/members/${encodeURIComponent(targetUserId)}`,
           { method: 'DELETE' },
         )
@@ -1190,14 +1169,14 @@ function LibraryPageContent() {
         toast.error(e instanceof Error ? e.message : 'Could not remove member.')
       }
     },
-    [wpId, fetchWorkspaceMembers],
+    [wpId, fetchWorkspaceMembers, authedFetch],
   )
 
   const changeMemberRole = useCallback(
     async (targetUserId: string, role: 'owner' | 'editor' | 'viewer') => {
       if (!wpId) return
       try {
-        const res = await fetch(
+        const res = await authedFetch(
           `/api/workspace-projects/${wpId}/members/${encodeURIComponent(targetUserId)}`,
           {
             method: 'PATCH',
@@ -1215,13 +1194,13 @@ function LibraryPageContent() {
         toast.error(e instanceof Error ? e.message : 'Could not update role.')
       }
     },
-    [wpId, fetchWorkspaceMembers],
+    [wpId, fetchWorkspaceMembers, authedFetch],
   )
 
   useEffect(() => {
     async function loadWorkspaces() {
       try {
-        const res = await fetch('/api/workspace-projects')
+        const res = await authedFetch('/api/workspace-projects')
         if (res.ok) {
           const data = await res.json()
           setWorkspaces(
@@ -1237,7 +1216,7 @@ function LibraryPageContent() {
       }
     }
     loadWorkspaces()
-  }, [])
+  }, [authedFetch])
 
   useEffect(() => {
     if (!wpId) {
@@ -1249,7 +1228,7 @@ function LibraryPageContent() {
     async function load() {
       setTreeLoading(true)
       try {
-        const res = await fetch(`/api/workspace-projects/${wpId}/tree`)
+        const res = await authedFetch(`/api/workspace-projects/${wpId}/tree`)
         if (!res.ok) {
           toast.error('Workspace not found')
           router.replace('/')
@@ -1276,7 +1255,7 @@ function LibraryPageContent() {
     return () => {
       cancelled = true
     }
-  }, [wpId, router])
+  }, [wpId, router, authedFetch])
 
   // Background polling for stuck/ongoing jobs
   useEffect(() => {
@@ -1308,11 +1287,11 @@ function LibraryPageContent() {
 
     // Try to delete from DB
     try {
-      await fetch(`/api/projects/${id}`, { method: 'DELETE' })
+      await authedFetch(`/api/projects/${id}`, { method: 'DELETE' })
     } catch (e) {
       console.error('Failed to delete cancelled project from db', e)
     }
-  }, [dispatch])
+  }, [dispatch, authedFetch])
 
   const processSingleFile = useCallback(
     async (file: File) => {
@@ -1325,7 +1304,7 @@ function LibraryPageContent() {
       const objectUrl = URL.createObjectURL(file)
 
       // Start presign in parallel
-      const presignPromise = fetch('/api/upload', {
+      const presignPromise = authedFetch('/api/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1473,7 +1452,7 @@ function LibraryPageContent() {
       })
 
       try {
-        const insertRes = await fetch('/api/projects/insert', {
+        const insertRes = await authedFetch('/api/projects/insert', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newProject),
@@ -1514,7 +1493,7 @@ function LibraryPageContent() {
           }
         })
 
-        await fetch(`/api/projects/${id}`, {
+        await authedFetch(`/api/projects/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'uploading', transcriptionProgress: 10 }),
@@ -1671,7 +1650,7 @@ function LibraryPageContent() {
               throw new Error('Multipart upload finished with missing parts.')
             }
 
-            const completeRes = await fetch('/api/upload/multipart', {
+            const completeRes = await authedFetch('/api/upload/multipart', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -1696,7 +1675,7 @@ function LibraryPageContent() {
               abortActivePartUploads()
             }
             if (!completed) {
-              await fetch('/api/upload/multipart', {
+              await authedFetch('/api/upload/multipart', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1748,7 +1727,7 @@ function LibraryPageContent() {
           }
         })
 
-        await fetch(`/api/projects/${id}`, {
+        await authedFetch(`/api/projects/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1763,7 +1742,7 @@ function LibraryPageContent() {
 
         void (async () => {
           try {
-            const prepRes = await fetch(`/api/projects/${id}/prepare-edit-asset`, {
+            const prepRes = await authedFetch(`/api/projects/${id}/prepare-edit-asset`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ originalKey, clientCapture }),
@@ -1899,7 +1878,7 @@ function LibraryPageContent() {
                 ),
               }
             })
-            await fetch(`/api/projects/${id}`, {
+            await authedFetch(`/api/projects/${id}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -1948,7 +1927,7 @@ function LibraryPageContent() {
             ),
           }
         })
-        await fetch(`/api/projects/${id}`, {
+        await authedFetch(`/api/projects/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'error' }),
@@ -1956,7 +1935,15 @@ function LibraryPageContent() {
         toast.error('Upload failed', { description: message, duration: 10_000 })
       }
     },
-    [dispatch, wpId, browseFilter, refetchTree, autoTranscribe, startTranscriptionForProject],
+    [
+      dispatch,
+      wpId,
+      browseFilter,
+      refetchTree,
+      autoTranscribe,
+      startTranscriptionForProject,
+      authedFetch,
+    ],
   )
 
   const handleFiles = useCallback(
@@ -2043,7 +2030,7 @@ function LibraryPageContent() {
   const moveMediaToFolder = useCallback(
     async (mediaId: string, folderId: string | null) => {
       try {
-        const res = await fetch(`/api/projects/${mediaId}`, {
+        const res = await authedFetch(`/api/projects/${mediaId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ folderId }),
@@ -2055,12 +2042,12 @@ function LibraryPageContent() {
         toast.error('Could not move media.')
       }
     },
-    [refetchTree],
+    [refetchTree, authedFetch],
   )
 
   const renameMediaProject = useCallback(
     async (mediaId: string, title: string) => {
-      const res = await fetch(`/api/projects/${mediaId}`, {
+      const res = await authedFetch(`/api/projects/${mediaId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),
@@ -2073,12 +2060,12 @@ function LibraryPageContent() {
       dispatch({ type: 'UPDATE_PROJECT', id: mediaId, updates: { title } })
       toast.success('Project renamed.')
     },
-    [refetchTree, dispatch],
+    [refetchTree, dispatch, authedFetch],
   )
 
   const deleteMediaProject = useCallback(
     async (mediaId: string) => {
-      const res = await fetch(`/api/projects/${mediaId}`, { method: 'DELETE' })
+      const res = await authedFetch(`/api/projects/${mediaId}`, { method: 'DELETE' })
       if (!res.ok) {
         const msg = await errorMessageFromResponse(res, 'Could not delete media.')
         toast.error(msg)
@@ -2091,11 +2078,11 @@ function LibraryPageContent() {
       })
       toast.success('Media deleted.')
     },
-    [dispatch],
+    [dispatch, authedFetch],
   )
 
   const createWorkspace = useCallback(async () => {
-    const res = await fetch('/api/workspace-projects', {
+    const res = await authedFetch('/api/workspace-projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'New project' }),
@@ -2107,13 +2094,13 @@ function LibraryPageContent() {
     const w = await res.json()
     setWorkspaces((prev) => [{ ...w, createdAt: new Date(w.createdAt) }, ...prev])
     router.push(`/?wp=${w.id}`)
-  }, [router])
+  }, [router, authedFetch])
 
   const deleteFolderById = useCallback(
     async (folderId: string) => {
       if (!confirm('Delete this folder? Subfolders are removed; files move to library root.')) return
       try {
-        const res = await fetch(`/api/folders/${folderId}`, { method: 'DELETE' })
+        const res = await authedFetch(`/api/folders/${folderId}`, { method: 'DELETE' })
         if (!res.ok) throw new Error('delete failed')
         await refetchTree()
         setBrowseFilter({ mode: 'all' })
@@ -2122,12 +2109,12 @@ function LibraryPageContent() {
         toast.error('Could not delete folder.')
       }
     },
-    [refetchTree],
+    [refetchTree, authedFetch],
   )
 
   const submitNewFolder = useCallback(async () => {
     if (!wpId || !newFolderName.trim()) return
-    const res = await fetch('/api/folders', {
+    const res = await authedFetch('/api/folders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2144,7 +2131,7 @@ function LibraryPageContent() {
     setFolderDialogOpen(false)
     await refetchTree()
     toast.success('Folder created.')
-  }, [wpId, newFolderName, newFolderParentId, refetchTree])
+  }, [wpId, newFolderName, newFolderParentId, refetchTree, authedFetch])
 
   const hasFilter = search.length > 0 || statusFilter !== 'all'
 
@@ -2494,6 +2481,34 @@ function LibraryPageContent() {
                   These options apply when you click <span className="font-medium text-foreground">Transcribe</span>{' '}
                   on a file marked “Needs transcript”.
                 </p>
+                <div className="mb-5 flex flex-col gap-3 rounded-xl border bg-muted/30 p-4 md:flex-row md:items-center md:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Recommended default workflow</p>
+                    <p className="text-xs text-muted-foreground">
+                      Start with the best model, speaker labels on, and leave speaker tuning blank unless you already
+                      know the roster or expected count.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setSpeechModel(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
+                      setSpeakerLabels(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
+                      setLanguageDetection(DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection)
+                      setTemperature([DEFAULT_TRANSCRIPTION_OPTIONS.temperature])
+                      setKeyterms(DEFAULT_TRANSCRIPTION_OPTIONS.keyterms ?? '')
+                      setCustomPrompt(DEFAULT_TRANSCRIPTION_PROMPT)
+                      setSpeakersExpected('')
+                      setMinSpeakers('')
+                      setMaxSpeakers('')
+                      setKnownSpeakers(DEFAULT_TRANSCRIPTION_OPTIONS.knownSpeakers ?? '')
+                      setRedactPii(DEFAULT_TRANSCRIPTION_OPTIONS.redactPii ?? false)
+                    }}
+                  >
+                    Reset to recommended
+                  </Button>
+                </div>
                 <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
                   <div className="flex flex-col gap-6">
                     <div className="flex flex-col gap-3">
@@ -2525,6 +2540,10 @@ function LibraryPageContent() {
                           <Sparkles className="size-3" />
                           Advanced Speaker Tuning
                         </div>
+                        <p className="text-[11px] leading-snug text-muted-foreground">
+                          Optional. Leave these blank unless you need to force a specific number of speakers or help the
+                          model map speakers to known names.
+                        </p>
                         
                         <div className="grid grid-cols-2 gap-4">
                           <div className="flex flex-col gap-2">

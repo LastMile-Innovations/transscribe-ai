@@ -1,12 +1,24 @@
-import { NextResponse } from 'next/server'
+import { after, NextResponse } from 'next/server'
 import { syncTranscriptFromWebhook } from '@/lib/assemblyai-transcript-sync'
 
 /**
- * AssemblyAI transcript completed / error webhook.
- * Configure ASSEMBLYAI_WEBHOOK_URL to this route's absolute URL and optional ASSEMBLYAI_WEBHOOK_SECRET.
+ * AssemblyAI pre-recorded transcription webhooks.
+ *
+ * @see https://www.assemblyai.com/docs/speech-to-text/pre-recorded-audio/webhooks
+ *
+ * Delivery: POST JSON `{ transcript_id, status }` where `status` is `completed` or `error`.
+ * Respond with 2xx within ~10s or AssemblyAI retries (up to 10 times, 10s apart).
+ * 4xx responses are not retried (use 401 only for bad auth — intentional).
+ *
+ * Configure `ASSEMBLYAI_WEBHOOK_URL` to this route; optional `ASSEMBLYAI_WEBHOOK_SECRET`
+ * must match `webhook_auth_header_*` sent from `/api/transcribe` (custom header name supported).
  */
 export async function POST(request: Request) {
   const secret = process.env.ASSEMBLYAI_WEBHOOK_SECRET?.trim()
+  if (process.env.NODE_ENV === 'production' && !secret) {
+    console.error('[AssemblyAI webhook] ASSEMBLYAI_WEBHOOK_SECRET is required in production')
+    return NextResponse.json({ error: 'Webhook not configured' }, { status: 503 })
+  }
   if (secret) {
     const headerName = (process.env.ASSEMBLYAI_WEBHOOK_AUTH_HEADER_NAME || 'X-AssemblyAI-Webhook-Secret').trim()
     const received = request.headers.get(headerName)
@@ -22,30 +34,35 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  if (
-    typeof body === 'object' &&
-    body !== null &&
-    'status' in body &&
-    (body as { status?: string }).status === 'redacted_audio_ready'
-  ) {
+  if (typeof body !== 'object' || body === null) {
+    return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
+  }
+
+  const payload = body as { status?: string; transcript_id?: string }
+
+  if (payload.status === 'redacted_audio_ready') {
     return NextResponse.json({ ok: true, ignored: 'redacted_audio' })
   }
 
   const transcriptId =
-    typeof body === 'object' && body !== null && 'transcript_id' in body
-      ? (body as { transcript_id?: string }).transcript_id
+    typeof payload.transcript_id === 'string' && payload.transcript_id.trim() !== ''
+      ? payload.transcript_id.trim()
       : undefined
 
-  if (!transcriptId || typeof transcriptId !== 'string') {
+  if (!transcriptId) {
     return NextResponse.json({ error: 'Missing transcript_id' }, { status: 400 })
   }
 
-  try {
-    await syncTranscriptFromWebhook(transcriptId)
-  } catch (e) {
-    console.error('[AssemblyAI webhook]', e)
-    return NextResponse.json({ error: 'Processing failed' }, { status: 500 })
+  const status = payload.status
+  if (status !== undefined && status !== 'completed' && status !== 'error') {
+    return NextResponse.json({ ok: true, ignored: true, status })
   }
 
-  return NextResponse.json({ ok: true })
+  after(() => {
+    void syncTranscriptFromWebhook(transcriptId).catch((e) => {
+      console.error('[AssemblyAI webhook] Background sync failed:', e)
+    })
+  })
+
+  return NextResponse.json({ ok: true, accepted: true })
 }

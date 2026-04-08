@@ -104,6 +104,28 @@ export async function insertSegmentsFromTranscriptResult(
   ])
 }
 
+function isSafeDuplicateSegmentInsertError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const message = error.message.toLowerCase()
+  return (
+    message.includes('duplicate key') &&
+    (message.includes('transcript_segments') || message.includes('pkey'))
+  )
+}
+
+async function ensureSegmentsPersisted(
+  transcriptUuid: string,
+  transcriptResult: Awaited<ReturnType<typeof client.transcripts.get>>,
+) {
+  try {
+    await insertSegmentsFromTranscriptResult(transcriptUuid, transcriptResult)
+  } catch (error) {
+    if (!isSafeDuplicateSegmentInsertError(error)) {
+      throw error
+    }
+  }
+}
+
 async function persistCompletedTranscript(
   projectId: string,
   dbTranscript: TranscriptRow | undefined,
@@ -124,7 +146,7 @@ async function persistCompletedTranscript(
       })
       .returning()
 
-    await insertSegmentsFromTranscriptResult(legacy.id, transcriptResult)
+    await ensureSegmentsPersisted(legacy.id, transcriptResult)
 
     await db
       .update(projects)
@@ -149,7 +171,7 @@ async function persistCompletedTranscript(
     .limit(1)
 
   if (existingSegs.length === 0) {
-    await insertSegmentsFromTranscriptResult(dbTranscript.id, transcriptResult)
+    await ensureSegmentsPersisted(dbTranscript.id, transcriptResult)
   }
 
   await db
@@ -258,7 +280,8 @@ export async function syncTranscriptFromAssemblyAi(
 }
 
 /**
- * Webhook notification: transcript_id + status (completed | error). Fetches full transcript from API.
+ * Webhook path: AssemblyAI POSTs `{ transcript_id, status }` (completed | error); we fetch the
+ * full transcript by ID and persist. Idempotent if called multiple times.
  */
 export async function syncTranscriptFromWebhook(assemblyAiId: string): Promise<void> {
   if (!apiKey) {

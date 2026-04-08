@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { openai } from '@ai-sdk/openai'
-import { requireProjectAccessForRoute, requireUserIdForRoute } from '@/lib/workspace-access'
+import { requireProjectAccessForRoute } from '@/lib/workspace-access'
 import {
   convertToModelMessages,
   stepCountIs,
@@ -41,18 +41,21 @@ const chatTools = {
 }
 
 export async function POST(req: NextRequest) {
-  const authResult = await requireUserIdForRoute()
-  if (authResult instanceof NextResponse) return authResult
-
   const body = (await req.json()) as {
     messages?: UIMessage[]
     data?: { transcriptText?: string; projectId?: string }
   }
 
-  if (body.data?.projectId) {
-    const access = await requireProjectAccessForRoute(body.data.projectId, 'editor')
-    if (access instanceof NextResponse) return access
+  const projectId = body.data?.projectId?.trim()
+  if (!projectId) {
+    return NextResponse.json(
+      { error: 'projectId is required in request data' },
+      { status: 400 },
+    )
   }
+
+  const access = await requireProjectAccessForRoute(projectId, 'editor')
+  if (access instanceof NextResponse) return access
 
   const messages = body.messages ?? []
   const transcriptContext = body.data?.transcriptText?.trim() || 'No transcript provided.'

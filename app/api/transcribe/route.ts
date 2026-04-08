@@ -11,6 +11,10 @@ import {
   publicObjectUrl,
   transcriptionObjectUrlMode,
 } from '@/lib/s3-storage'
+import {
+  normalizeTranscriptionOptions,
+  validateTranscriptionOptions,
+} from '@/lib/transcription-options'
 
 export const maxDuration = 300
 
@@ -22,9 +26,14 @@ export async function POST(request: Request) {
   let stream: NodeJS.ReadableStream | null = null
   try {
     const { projectId, options } = await request.json()
+    const normalizedOptions = normalizeTranscriptionOptions(options)
+    const validationError = validateTranscriptionOptions(normalizedOptions)
 
     if (!projectId) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
+    }
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 })
     }
 
     const access = await requireProjectAccessForRoute(projectId, 'editor')
@@ -58,17 +67,17 @@ export async function POST(request: Request) {
     }
 
     const speechModelsArray =
-      options?.speechModel === 'fast' ? ['universal-2'] : ['universal-3-pro', 'universal-2']
+      normalizedOptions.speechModel === 'fast' ? ['universal-2'] : ['universal-3-pro', 'universal-2']
     const isUniversal2Only = speechModelsArray.length === 1 && speechModelsArray[0] === 'universal-2'
 
     const params: Record<string, unknown> = {
       speech_models: speechModelsArray,
-      language_detection: options?.languageDetection ?? true,
-      speaker_labels: options?.speakerLabels ?? true,
+      language_detection: normalizedOptions.languageDetection,
+      speaker_labels: normalizedOptions.speakerLabels,
     }
 
     if (!isUniversal2Only) {
-      params.temperature = options?.temperature ?? 0.1
+      params.temperature = normalizedOptions.temperature
     }
 
     if (resolvedAudioUrl) {
@@ -95,13 +104,13 @@ export async function POST(request: Request) {
       }
     }
 
-    const keytermsInput = options?.keyterms as string | undefined
+    const keytermsInput = normalizedOptions.keyterms
     const keytermsArray = keytermsInput
       ? keytermsInput.split(',').map((t) => t.trim()).filter((t) => t !== '')
       : []
 
-    if (options?.prompt && options.prompt.trim() !== '') {
-      let finalPrompt = options.prompt
+    if (normalizedOptions.prompt && normalizedOptions.prompt !== '') {
+      let finalPrompt = normalizedOptions.prompt
       if (keytermsArray.length > 0) {
         finalPrompt += `\n\nContext: ${keytermsArray.join(', ')}`
       }
@@ -111,11 +120,11 @@ export async function POST(request: Request) {
     }
 
     if (params.speaker_labels) {
-      if (options?.speakersExpected) {
-        params.speakers_expected = options.speakersExpected
+      if (normalizedOptions.speakersExpected) {
+        params.speakers_expected = normalizedOptions.speakersExpected
       } else {
-        const min = options?.minSpeakers
-        const max = options?.maxSpeakers
+        const min = normalizedOptions.minSpeakers
+        const max = normalizedOptions.maxSpeakers
         if (
           typeof min === 'number' &&
           Number.isFinite(min) &&
@@ -129,8 +138,8 @@ export async function POST(request: Request) {
         }
       }
 
-      const knownSpeakersArray = options?.knownSpeakers
-        ? (options.knownSpeakers as string).split(',').map((n) => n.trim()).filter((n) => n !== '')
+      const knownSpeakersArray = normalizedOptions.knownSpeakers
+        ? normalizedOptions.knownSpeakers.split(',').map((n) => n.trim()).filter((n) => n !== '')
         : []
 
       if (knownSpeakersArray.length > 0) {
@@ -145,7 +154,7 @@ export async function POST(request: Request) {
       }
     }
 
-    if (options?.redactPii) {
+    if (normalizedOptions.redactPii) {
       params.redact_pii = true
       params.redact_pii_audio = false
       params.redact_pii_sub = 'hash'
@@ -166,8 +175,8 @@ export async function POST(request: Request) {
     const submitted = await client.transcripts.submit(params as never)
 
     const label =
-      typeof options?.transcriptLabel === 'string' && options.transcriptLabel.trim() !== ''
-        ? options.transcriptLabel.trim()
+      normalizedOptions.transcriptLabel && normalizedOptions.transcriptLabel !== ''
+        ? normalizedOptions.transcriptLabel
         : null
 
     const [pendingRow] = await db

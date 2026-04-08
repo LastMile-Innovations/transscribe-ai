@@ -142,6 +142,7 @@ export type AppAction =
   | { type: 'UPDATE_PROJECT'; id: string; updates: Partial<VideoProject> }
   | { type: 'SET_ACTIVE_PROJECT'; id: string }
   | { type: 'SET_TRANSCRIPT'; transcript: Transcript | null }
+  | { type: 'SET_TRANSCRIPT_SEGMENTS'; segments: TranscriptSegment[] }
   | { type: 'UPDATE_SEGMENT'; id: string; updates: Partial<TranscriptSegment> }
   | { type: 'ADD_SEGMENT'; segment: TranscriptSegment; afterId: string }
   | { type: 'DELETE_SEGMENT'; id: string }

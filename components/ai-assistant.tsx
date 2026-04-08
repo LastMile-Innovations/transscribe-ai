@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { toast } from 'sonner'
 import {
   Sparkles,
@@ -19,7 +19,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useApp } from '@/lib/app-context'
 import type { TextOverlay } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { updateSegmentAction } from '@/lib/actions'
+import { useAuthedFetch } from '@/lib/authed-fetch'
+import { bulkUpdateSegmentsAction } from '@/lib/actions'
 import { useChat } from '@ai-sdk/react'
 import {
   DefaultChatTransport,
@@ -187,6 +188,7 @@ function MessageBubble({ message }: { message: UIMessage }) {
 }
 
 export function AIAssistant() {
+  const authedFetch = useAuthedFetch()
   const { state, dispatch } = useApp()
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -203,57 +205,92 @@ export function AIAssistant() {
     activeProjectIdRef.current = state.activeProjectId
   }, [state.activeProjectId])
 
-  const [transport] = useState(
+  const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: '/api/chat',
+        credentials: 'include',
+        fetch: authedFetch,
         prepareSendMessagesRequest: ({ body }) => ({
           body: {
             ...body,
             data: {
               transcriptText: transcriptTextRef.current,
-              ...(activeProjectIdRef.current
-                ? { projectId: activeProjectIdRef.current }
-                : {}),
+              projectId: activeProjectIdRef.current ?? '',
             },
           },
         }),
       }),
+    [authedFetch],
   )
 
   const applyToolCall = useCallback(
-    (toolName: string, args: Record<string, unknown>) => {
+    async (toolName: string, args: Record<string, unknown>) => {
       switch (toolName) {
         case 'removeFillerWords': {
           if (!state.transcript) break
           const find = (args.find as string[] | undefined) ?? ['um', 'uh']
-          state.transcript.segments.forEach((seg) => {
+          const previousSegments = state.transcript.segments
+          const nextSegments = previousSegments.map((seg) => {
             let cleaned = seg.text
             find.forEach((f: string) => {
               const regex = new RegExp(`,?\\s+${f}\\b`, 'gi')
               cleaned = cleaned.replace(regex, '')
             })
             cleaned = cleaned.replace(/\s+/g, ' ').trim()
-            if (cleaned !== seg.text) {
-              dispatch({ type: 'UPDATE_SEGMENT', id: seg.id, updates: { text: cleaned } })
-              updateSegmentAction(seg.id, { text: cleaned }).catch(() => {})
-            }
+            return cleaned !== seg.text ? { ...seg, text: cleaned } : seg
           })
+          const changed = nextSegments.filter((seg, index) => seg.text !== previousSegments[index].text)
+          if (changed.length === 0) {
+            toast.message('No filler words found in the transcript.')
+            break
+          }
+          dispatch({ type: 'SET_TRANSCRIPT_SEGMENTS', segments: nextSegments })
+          try {
+            await bulkUpdateSegmentsAction(
+              state.transcript.id,
+              changed.map((segment) => ({
+                id: segment.id,
+                updates: { text: segment.text },
+              })),
+            )
+          } catch {
+            dispatch({ type: 'SET_TRANSCRIPT_SEGMENTS', segments: previousSegments })
+            toast.error('Could not save the filler word cleanup.')
+            break
+          }
           toast.success('Filler words removed from transcript.')
           break
         }
         case 'fixGrammar': {
           if (!state.transcript) break
-          state.transcript.segments.forEach((seg) => {
+          const previousSegments = state.transcript.segments
+          const nextSegments = previousSegments.map((seg) => {
             const fixed = seg.text
               .replace(/^([a-z])/, (c) => c.toUpperCase())
               .replace(/([.!?])\s+([a-z])/g, (_, p, c) => `${p} ${c.toUpperCase()}`)
               .trim()
-            if (fixed !== seg.text) {
-              dispatch({ type: 'UPDATE_SEGMENT', id: seg.id, updates: { text: fixed } })
-              updateSegmentAction(seg.id, { text: fixed }).catch(() => {})
-            }
+            return fixed !== seg.text ? { ...seg, text: fixed } : seg
           })
+          const changed = nextSegments.filter((seg, index) => seg.text !== previousSegments[index].text)
+          if (changed.length === 0) {
+            toast.message('Grammar cleanup did not change any transcript text.')
+            break
+          }
+          dispatch({ type: 'SET_TRANSCRIPT_SEGMENTS', segments: nextSegments })
+          try {
+            await bulkUpdateSegmentsAction(
+              state.transcript.id,
+              changed.map((segment) => ({
+                id: segment.id,
+                updates: { text: segment.text },
+              })),
+            )
+          } catch {
+            dispatch({ type: 'SET_TRANSCRIPT_SEGMENTS', segments: previousSegments })
+            toast.error('Could not save the grammar cleanup.')
+            break
+          }
           toast.success('Grammar fixes applied.')
           break
         }
@@ -313,7 +350,7 @@ export function AIAssistant() {
         tc.input ??
         (toolCall as { args?: Record<string, unknown> }).args ??
         {}
-      applyToolCall(tc.toolName, inputArgs)
+      void applyToolCall(tc.toolName, inputArgs)
     },
   })
 
@@ -335,6 +372,10 @@ export function AIAssistant() {
   const submitMessage = async () => {
     const t = input.trim()
     if (!t || busy) return
+    if (!state.activeProjectId) {
+      toast.error('Open a media file before using the assistant.')
+      return
+    }
     setInput('')
     try {
       await sendMessage({ text: t })
