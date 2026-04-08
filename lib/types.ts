@@ -33,6 +33,12 @@ export interface VideoProject {
   /** ffprobe payloads + derived summary (original vault file + edit MP4). */
   mediaMetadata?: StoredMediaMetadata | null
   transcriptionProgress: number // 0–100
+  /** Client-only while uploading to storage; not persisted. */
+  uploadProgress?: {
+    loaded: number
+    total: number
+    speedBps: number
+  }
   workspaceProjectId: string
   folderId: string | null
   caseId?: string | null
@@ -124,6 +130,7 @@ export interface AppState {
 export type AppAction =
   | { type: 'SET_PROJECTS'; projects: VideoProject[] }
   | { type: 'ADD_PROJECT'; project: VideoProject }
+  | { type: 'DELETE_PROJECT'; id: string }
   | { type: 'UPDATE_PROJECT'; id: string; updates: Partial<VideoProject> }
   | { type: 'SET_ACTIVE_PROJECT'; id: string }
   | { type: 'SET_TRANSCRIPT'; transcript: Transcript | null }

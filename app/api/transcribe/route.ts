@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { transcripts } from '@/lib/db/schema'
 import { requireProjectAccessForRoute } from '@/lib/workspace-access'
 import { buildEditObjectKey } from '@/lib/media-keys'
-import { getObjectBodyStream } from '@/lib/s3-storage'
+import { getObjectBodyStream, publicObjectUrl } from '@/lib/s3-storage'
 
 export const maxDuration = 300
 
@@ -28,17 +28,23 @@ export async function POST(request: Request) {
     }
 
     const editKey = buildEditObjectKey(access.workspaceProjectId, projectId)
-    stream = await getObjectBodyStream(editKey)
+    const publicUrl = publicObjectUrl(editKey)
 
     const speechModelsArray =
       options?.speechModel === 'fast' ? ['universal-2'] : ['universal-3-pro', 'universal-2']
 
     const params: Record<string, unknown> = {
-      audio: stream,
       speech_models: speechModelsArray,
       language_detection: options?.languageDetection ?? true,
       speaker_labels: options?.speakerLabels ?? true,
       temperature: options?.temperature ?? 0.1,
+    }
+
+    if (publicUrl && !publicUrl.includes('localhost') && !publicUrl.includes('127.0.0.1')) {
+      params.audio_url = publicUrl
+    } else {
+      stream = await getObjectBodyStream(editKey)
+      params.audio = stream
     }
 
     const keytermsInput = options?.keyterms as string | undefined

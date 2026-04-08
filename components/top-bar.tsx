@@ -59,6 +59,12 @@ function formatDuration(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function formatTranscriptLabel(t: TranscriptSummary): string {
   if (t.label?.trim()) return t.label.trim()
   const d = t.createdAt instanceof Date ? t.createdAt : new Date(t.createdAt)
@@ -126,6 +132,52 @@ function MediaMetadataDialog({
                     <MetaRow label="Edit key" value={m.editKey} />
                   </dl>
                 </section>
+                {m.clientCapture ? (
+                  <section>
+                    <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                      Browser &amp; device (upload)
+                    </h4>
+                    <p className="mb-2 text-[11px] text-muted-foreground">
+                      Captured in the browser when the file was chosen. OS file times often match
+                      recording or export on phones (e.g. iPhone).
+                    </p>
+                    <dl className="space-y-1.5">
+                      <MetaRow label="File name" value={m.clientCapture.file.name} />
+                      <MetaRow label="File size" value={formatFileSize(m.clientCapture.file.size)} />
+                      <MetaRow label="MIME (browser)" value={m.clientCapture.file.type} />
+                      <MetaRow label="Last modified (file)" value={m.clientCapture.file.lastModifiedIso} />
+                      <MetaRow label="Capture time (browser)" value={m.clientCapture.capturedAt} />
+                      {m.clientCapture.video ? (
+                        <>
+                          <MetaRow
+                            label="Video element size"
+                            value={`${m.clientCapture.video.videoWidth}×${m.clientCapture.video.videoHeight}`}
+                          />
+                          <MetaRow
+                            label="Video element duration"
+                            value={`${m.clientCapture.video.durationMs} ms`}
+                          />
+                        </>
+                      ) : null}
+                      {m.clientCapture.environment ? (
+                        <>
+                          <MetaRow label="Platform" value={m.clientCapture.environment.platform} />
+                          <MetaRow label="Language" value={m.clientCapture.environment.language} />
+                          <MetaRow
+                            label="User agent"
+                            value={m.clientCapture.environment.userAgent}
+                          />
+                          {m.clientCapture.environment.hardwareConcurrency != null ? (
+                            <MetaRow
+                              label="CPU cores (hint)"
+                              value={m.clientCapture.environment.hardwareConcurrency}
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
+                    </dl>
+                  </section>
+                ) : null}
                 {tagEntries.length > 0 && (
                   <section>
                     <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">

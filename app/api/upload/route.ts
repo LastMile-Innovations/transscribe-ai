@@ -12,6 +12,9 @@ export async function POST(request: Request) {
     if (!filename || !contentType) {
       return NextResponse.json({ error: 'Missing filename or contentType' }, { status: 400 })
     }
+    if (!contentType.startsWith('video/')) {
+      return NextResponse.json({ error: 'Only video files are allowed' }, { status: 400 })
+    }
     if (!workspaceProjectId) {
       return NextResponse.json({ error: 'Missing workspaceProjectId' }, { status: 400 })
     }

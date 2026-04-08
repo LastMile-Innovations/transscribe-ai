@@ -1,7 +1,11 @@
 /**
  * Media metadata from ffprobe: stored in DB (full JSON) + derived fields for UI.
+ * Optional browser-side capture (File + video element + navigator) is merged under `clientCapture`
+ * and flattened into `derived.tags` with a `client.*` prefix.
  * Safe to import from client or server (no Node-only APIs).
  */
+
+import type { ClientMediaCapture } from './client-media-capture'
 
 export type MediaMetadataDerived = {
   sourceDurationMs: number | null
@@ -31,6 +35,8 @@ export type StoredMediaMetadata = {
   original: unknown
   edit: unknown
   derived: MediaMetadataDerived
+  /** Optional snapshot from the uploader’s browser (not from the file binary). */
+  clientCapture?: ClientMediaCapture
 }
 
 type LooseProbe = {
@@ -92,6 +98,78 @@ function collectTags(probe: unknown): Record<string, string> {
   return out
 }
 
+function collectProgramTags(probe: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  const p = probe as { programs?: Array<{ tags?: Record<string, unknown> }> }
+  p.programs?.forEach((prog, i) => {
+    const tags = prog.tags
+    if (!tags) return
+    for (const [k, v] of Object.entries(tags)) {
+      if (typeof v === 'string' && v.length > 0) out[`program${i}.${k}`] = v
+    }
+  })
+  return out
+}
+
+function collectStreamSideDataTags(probe: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  const p = probe as LooseProbe
+  p.streams?.forEach((s, i) => {
+    const list = s.side_data_list as Array<Record<string, unknown>> | undefined
+    if (!Array.isArray(list)) return
+    list.forEach((sd, j) => {
+      const typ = asString(sd.side_data_type) ?? `entry${j}`
+      const rot = toInt(sd.rotation)
+      if (rot != null) {
+        out[`stream${i}.side_data.${typ}.rotation`] = String(rot)
+      }
+      const dm = asString(sd.displaymatrix)
+      if (dm && dm.length < 400) {
+        out[`stream${i}.side_data.${typ}.displaymatrix`] = dm
+      }
+    })
+  })
+  return out
+}
+
+function mergeProbeExtraTags(probe: unknown, into: Record<string, string>): void {
+  for (const [k, v] of Object.entries(collectProgramTags(probe))) {
+    if (!(k in into)) into[k] = v
+  }
+  for (const [k, v] of Object.entries(collectStreamSideDataTags(probe))) {
+    if (!(k in into)) into[k] = v
+  }
+}
+
+function applyClientCaptureToDerived(derived: MediaMetadataDerived, c: ClientMediaCapture): void {
+  const t = derived.tags
+  const set = (suffix: string, v: string) => {
+    t[`client.${suffix}`] = v
+  }
+  set('file.name', c.file.name)
+  set('file.size_bytes', String(c.file.size))
+  set('file.mime', c.file.type)
+  set('file.last_modified_iso', c.file.lastModifiedIso)
+  if (c.video) {
+    set('video.element_width', String(c.video.videoWidth))
+    set('video.element_height', String(c.video.videoHeight))
+    set('video.element_duration_ms', String(c.video.durationMs))
+  }
+  if (c.environment) {
+    set('browser.user_agent', c.environment.userAgent)
+    set('browser.platform', c.environment.platform)
+    set('browser.language', c.environment.language)
+    set('browser.languages', c.environment.languages.join(', '))
+    if (c.environment.hardwareConcurrency != null) {
+      set('browser.hardware_concurrency', String(c.environment.hardwareConcurrency))
+    }
+    if (c.environment.deviceMemoryGb != null) {
+      set('browser.device_memory_gb_hint', String(c.environment.deviceMemoryGb))
+    }
+  }
+  set('browser.capture_iso', c.capturedAt)
+}
+
 function deriveOneSide(probe: unknown): {
   durationMs: number | null
   width: number | null
@@ -132,11 +210,13 @@ export function deriveMediaMetadataFromReports(
   const pOrig = originalReport as LooseProbe
   const chapters = Array.isArray(pOrig.chapters) ? pOrig.chapters.length : 0
   const tags = collectTags(originalReport)
+  mergeProbeExtraTags(originalReport, tags)
   const editTags = collectTags(editReport)
   for (const [k, v] of Object.entries(editTags)) {
     const key = `edit.${k}`
     if (!(key in tags)) tags[key] = v
   }
+  mergeProbeExtraTags(editReport, tags)
   return {
     sourceDurationMs: src.durationMs,
     editDurationMs: ed.durationMs,
@@ -162,14 +242,20 @@ export function buildStoredMediaMetadata(
   editKey: string,
   originalReport: unknown,
   editReport: unknown,
+  clientCapture?: ClientMediaCapture | null,
 ): StoredMediaMetadata {
+  const derived = deriveMediaMetadataFromReports(originalReport, editReport)
+  if (clientCapture) {
+    applyClientCaptureToDerived(derived, clientCapture)
+  }
   return {
     extractedAt: new Date().toISOString(),
     originalKey,
     editKey,
     original: originalReport,
     edit: editReport,
-    derived: deriveMediaMetadataFromReports(originalReport, editReport),
+    derived,
+    ...(clientCapture ? { clientCapture } : {}),
   }
 }
 

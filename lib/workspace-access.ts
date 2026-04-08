@@ -46,14 +46,14 @@ export async function requireWorkspaceAccessForRoute(
 export async function requireProjectAccessForRoute(
   projectId: string,
   minRole: WorkspaceMemberRole,
-): Promise<{ userId: string; role: WorkspaceMemberRole; workspaceProjectId: string } | NextResponse> {
+) {
   const userId = await getAuthUserId()
   if (!userId) return jsonUnauthorized()
   const proj = await findProjectById(projectId)
   if (!proj) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   const row = await findMembership(userId, proj.workspaceProjectId)
   if (!row || !roleAtLeast(row.role, minRole)) return jsonForbidden()
-  return { userId, role: row.role, workspaceProjectId: proj.workspaceProjectId }
+  return { userId, role: row.role, workspaceProjectId: proj.workspaceProjectId, project: proj }
 }
 
 export async function assertWorkspaceAccess(workspaceId: string, minRole: WorkspaceMemberRole): Promise<void> {

@@ -19,7 +19,7 @@ function asTranscodeProbe(report: unknown): FfprobeJson {
 
 /** Full ffprobe JSON for storage (format, streams, chapters, etc.). */
 export async function ffprobeFullReport(inputPath: string): Promise<unknown> {
-  const { stdout } = await execFileAsync('ffprobe', [
+  const base = [
     '-v',
     'quiet',
     '-print_format',
@@ -27,9 +27,14 @@ export async function ffprobeFullReport(inputPath: string): Promise<unknown> {
     '-show_format',
     '-show_streams',
     '-show_chapters',
-    inputPath,
-  ])
-  return JSON.parse(stdout) as unknown
+  ] as const
+  try {
+    const { stdout } = await execFileAsync('ffprobe', [...base, '-show_programs', inputPath])
+    return JSON.parse(stdout) as unknown
+  } catch {
+    const { stdout } = await execFileAsync('ffprobe', [...base, inputPath])
+    return JSON.parse(stdout) as unknown
+  }
 }
 
 /**

@@ -5,9 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { db } from '@/lib/db'
-import { findProjectById } from '@/lib/db/queries'
 import { projects } from '@/lib/db/schema'
 import { ffprobeFullReport, transcodeOrRemuxToMp4 } from '@/lib/ffmpeg-transcode'
+import { parseClientMediaCaptureFromJson } from '@/lib/client-media-capture'
 import { buildStoredMediaMetadata } from '@/lib/media-metadata'
 import { buildEditObjectKey, isValidOriginalObjectKey } from '@/lib/media-keys'
 import { downloadObjectToFileAndHash, publicObjectUrl, uploadFileToObjectKey } from '@/lib/s3-storage'
@@ -28,22 +28,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const access = await requireProjectAccessForRoute(projectId, 'editor')
   if (access instanceof NextResponse) return access
 
-  let body: { originalKey?: string }
+  let body: { originalKey?: string; clientCapture?: unknown }
   try {
     body = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
+  const clientCapture = parseClientMediaCaptureFromJson(body.clientCapture)
+
   const originalKey = body.originalKey
   if (!originalKey || typeof originalKey !== 'string') {
     return NextResponse.json({ error: 'Missing originalKey' }, { status: 400 })
   }
 
-  const proj = await findProjectById(projectId)
-  if (!proj) {
-    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-  }
+  const proj = access.project
 
   if (proj.workspaceProjectId !== access.workspaceProjectId) {
     return NextResponse.json({ error: 'Project workspace mismatch' }, { status: 403 })
@@ -69,7 +68,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const originalFileUrl = publicObjectUrl(originalKey)
     const fileUrl = publicObjectUrl(editKey)
 
-    const mediaMetadata = buildStoredMediaMetadata(originalKey, editKey, originalReport, editReport)
+    const mediaMetadata = buildStoredMediaMetadata(
+      originalKey,
+      editKey,
+      originalReport,
+      editReport,
+      clientCapture,
+    )
     const nextDuration =
       mediaMetadata.derived.sourceDurationMs != null && mediaMetadata.derived.sourceDurationMs > 0
         ? mediaMetadata.derived.sourceDurationMs

@@ -71,7 +71,9 @@ import {
   preferredDurationMs,
   type StoredMediaMetadata,
 } from '@/lib/media-metadata'
+import { buildClientMediaCapture } from '@/lib/client-media-capture'
 import { buildOriginalUploadKey } from '@/lib/media-keys'
+import { pollTranscriptionUntilComplete } from '@/lib/transcription-poll-client'
 import { cn } from '@/lib/utils'
 
 function formatDuration(ms: number): string {
@@ -91,6 +93,48 @@ function formatDate(date: Date): string {
     day: 'numeric',
     year: 'numeric',
   }).format(date)
+}
+
+function formatDataSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatTransferSpeed(bps: number): string {
+  if (!Number.isFinite(bps) || bps <= 0) return '—'
+  if (bps < 1024) return `${bps.toFixed(0)} B/s`
+  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(1)} KB/s`
+  return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`
+}
+
+function formatEtaSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return ''
+  if (seconds < 90) return `${Math.max(1, Math.ceil(seconds))}s left`
+  const m = Math.floor(seconds / 60)
+  const s = Math.ceil(seconds % 60)
+  return `${m}m ${s}s left`
+}
+
+function VaultUploadStats({ up }: { up: NonNullable<VideoProject['uploadProgress']> }) {
+  const etaSec =
+    up.speedBps > 0 && up.loaded < up.total ? (up.total - up.loaded) / up.speedBps : NaN
+  const etaStr = formatEtaSeconds(etaSec)
+  return (
+    <p className="max-w-[min(100%,14rem)] text-[11px] leading-snug text-white/85">
+      <span className="font-mono tabular-nums">
+        {formatDataSize(up.loaded)} / {formatDataSize(up.total)}
+      </span>
+      <span className="text-white/60"> · </span>
+      <span className="font-mono tabular-nums">{formatTransferSpeed(up.speedBps)}</span>
+      {etaStr ? (
+        <>
+          <span className="text-white/60"> · </span>
+          <span className="tabular-nums">{etaStr}</span>
+        </>
+      ) : null}
+    </p>
+  )
 }
 
 const STATUS_CONFIG: Record<ProjectStatus, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive'; icon: React.ReactNode }> = {
@@ -175,15 +219,18 @@ function ProjectCard({
         )}
         {/* Processing overlay */}
         {isProcessing && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 backdrop-blur-sm">
-            <Loader2 className="size-8 animate-spin text-brand" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 px-3 py-2 text-center backdrop-blur-sm">
+            <Loader2 className="size-8 shrink-0 animate-spin text-brand" />
             <span className="text-sm font-medium text-white">
-              {project.status === 'uploading' ? 'Uploading...' : 'Transcribing with AssemblyAI...'}
+              {project.status === 'uploading' ? 'Uploading to vault…' : 'Transcribing with AssemblyAI...'}
             </span>
-            <div className="w-40">
+            {project.status === 'uploading' && project.uploadProgress ? (
+              <VaultUploadStats up={project.uploadProgress} />
+            ) : null}
+            <div className="w-44 max-w-full">
               <Progress value={project.transcriptionProgress} className="h-1.5" />
             </div>
-            <span className="text-xs text-white/70">{project.transcriptionProgress}%</span>
+            <span className="text-xs text-white/70 tabular-nums">{project.transcriptionProgress}%</span>
           </div>
         )}
         {/* Duration badge */}
@@ -792,42 +839,107 @@ function LibraryPageContent() {
 
       const targetFolderId = browseFilter.mode === 'folder' ? browseFilter.folderId : null
 
-      const id = `proj-${Date.now()}`
+      const id = `proj-${crypto.randomUUID()}`
+      const originalKey = buildOriginalUploadKey(wpId, id, file.name)
       const objectUrl = URL.createObjectURL(file)
+
+      toast.info('Preparing upload...')
+
+      // Start presign in parallel
+      const presignPromise = fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspaceProjectId: wpId,
+          filename: originalKey,
+          contentType: file.type,
+        }),
+      }).then(async (res) => {
+        if (!res.ok) throw new Error('Failed to get upload URL')
+        return res.json() as Promise<{ signedUrl: string }>
+      })
 
       // Initialize video element for metadata & thumbnail
       const video = document.createElement('video')
       video.preload = 'metadata'
       video.src = objectUrl
 
-      // Capture duration and thumbnail concurrently
-      const { duration, thumbnailUrl } = await new Promise<{ duration: number; thumbnailUrl: string }>((resolve) => {
+      // Capture duration, thumbnail, and intrinsic video dimensions (helps correlate with ffprobe / device)
+      const { duration, thumbnailUrl, videoWidth, videoHeight } = await new Promise<{
+        duration: number
+        thumbnailUrl: string
+        videoWidth: number
+        videoHeight: number
+      }>((resolve) => {
         let duration = 0
         let thumb = `https://picsum.photos/seed/${id}/640/360`
+        let resolved = false
+        let safetyTimeout: number
+
+        const finish = (d: number, t: string) => {
+          if (resolved) return
+          resolved = true
+          const vw = video.videoWidth || 0
+          const vh = video.videoHeight || 0
+          window.clearTimeout(safetyTimeout)
+          URL.revokeObjectURL(objectUrl)
+          video.src = ''
+          resolve({ duration: d, thumbnailUrl: t, videoWidth: vw, videoHeight: vh })
+        }
+
+        safetyTimeout = window.setTimeout(() => finish(duration || 60000, thumb), 10_000)
 
         video.onloadedmetadata = () => {
-          duration = Math.round(video.duration * 1000)
+          const sec = video.duration
+          if (Number.isFinite(sec) && sec > 0) {
+            duration = Math.round(sec * 1000)
+          }
         }
 
         video.onloadeddata = () => {
-          video.currentTime = 1 
+          const sec = video.duration
+          if (!Number.isFinite(sec) || sec <= 0) {
+            finish(duration || 60000, thumb)
+            return
+          }
+          const seekTime = Math.min(1, Math.max(0, sec - 0.1))
+          video.currentTime = seekTime || 0
         }
 
         video.onseeked = () => {
-          const canvas = document.createElement('canvas')
-          const ctx = canvas.getContext('2d')
-          canvas.width = video.videoWidth / 4
-          canvas.height = video.videoHeight / 4
-          ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
-          thumb = canvas.toDataURL('image/jpeg', 0.7)
-          resolve({ duration, thumbnailUrl: thumb })
+          try {
+            const canvas = document.createElement('canvas')
+            const ctx = canvas.getContext('2d')
+            canvas.width = video.videoWidth / 4
+            canvas.height = video.videoHeight / 4
+            ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
+            thumb = canvas.toDataURL('image/jpeg', 0.7)
+          } catch (e) {
+            console.error('Failed to generate thumbnail', e)
+          }
+          finish(duration, thumb)
         }
 
-        video.onerror = () => resolve({ duration: 60000, thumbnailUrl: thumb })
-        
-        // Safety timeout
-        setTimeout(() => resolve({ duration: duration || 60000, thumbnailUrl: thumb }), 4000)
+        video.onerror = () => finish(60000, thumb)
       })
+
+      const presignData = await presignPromise.catch((e) => {
+        console.error('Presign error:', e)
+        return null
+      })
+
+      if (!presignData) {
+        toast.error('Failed to generate secure upload link.')
+        return
+      }
+      const { signedUrl } = presignData
+
+      const clientCapture = buildClientMediaCapture(
+        file,
+        videoWidth > 0 && videoHeight > 0
+          ? { videoWidth, videoHeight, durationMs: duration }
+          : undefined,
+      )
 
       const newProject: VideoProject = {
         id,
@@ -844,41 +956,46 @@ function LibraryPageContent() {
       }
 
       dispatch({ type: 'ADD_PROJECT', project: newProject })
+      setTree((prev) => {
+        if (!prev) return prev
+        return { ...prev, media: [newProject, ...prev.media] }
+      })
 
       try {
-        await fetch('/api/projects/insert', {
+        const insertRes = await fetch('/api/projects/insert', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newProject),
         })
+        if (!insertRes.ok) {
+          throw new Error('Failed to save project to database')
+        }
       } catch (err) {
         console.error('DB Persistence Error:', err)
+        dispatch({ type: 'DELETE_PROJECT', id })
+        setTree((prev) => {
+          if (!prev) return prev
+          return { ...prev, media: prev.media.filter((m) => m.id !== id) }
+        })
+        toast.error('Failed to create project.')
+        return
       }
 
-      toast.info('Generating secure upload link...')
-
-      const originalKey = buildOriginalUploadKey(wpId, id, file.name)
-
       try {
-        // 1. Presign upload to immutable original key (vault)
-        const presignRes = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            workspaceProjectId: wpId,
-            filename: originalKey,
-            contentType: file.type,
-          }),
-        })
-        
-        if (!presignRes.ok) throw new Error('Failed to get upload URL')
-        
-        const { signedUrl } = await presignRes.json()
-
+        // 1. We already presigned upload to immutable original key (vault)
         dispatch({
           type: 'UPDATE_PROJECT',
           id,
           updates: { status: 'uploading', transcriptionProgress: 10 }
+        })
+        setTree((prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            media: prev.media.map((m) =>
+              m.id === id ? { ...m, status: 'uploading', transcriptionProgress: 10 } : m
+            ),
+          }
         })
 
         await fetch(`/api/projects/${id}`, {
@@ -890,26 +1007,68 @@ function LibraryPageContent() {
         toast.info('Uploading media to evidence vault...')
 
         // 2. Upload file directly to object storage (presigned PUT)
-        const uploadRes = await fetch(signedUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': file.type,
-          },
-          body: file,
-        })
+        // Using XMLHttpRequest for progress, speed, and ETA
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest()
+          xhr.open('PUT', signedUrl)
+          xhr.setRequestHeader('Content-Type', file.type)
+          const uploadStartedAt = performance.now()
 
-        if (!uploadRes.ok) throw new Error('Failed to upload to object storage')
+          xhr.upload.onprogress = (e) => {
+            if (!e.lengthComputable || e.total <= 0) return
+            const elapsedSec = Math.max((performance.now() - uploadStartedAt) / 1000, 0.05)
+            const speedBps = e.loaded / elapsedSec
+            const percent = Math.round((e.loaded / e.total) * 40) + 10 // 10% to 50%
+            const uploadProgress = {
+              loaded: e.loaded,
+              total: e.total,
+              speedBps,
+            }
+            dispatch({
+              type: 'UPDATE_PROJECT',
+              id,
+              updates: { transcriptionProgress: percent, uploadProgress },
+            })
+            setTree((prev) => {
+              if (!prev) return prev
+              return {
+                ...prev,
+                media: prev.media.map((m) =>
+                  m.id === id ? { ...m, transcriptionProgress: percent, uploadProgress } : m,
+                ),
+              }
+            })
+          }
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve()
+            } else {
+              reject(new Error('Failed to upload to object storage'))
+            }
+          }
+
+          xhr.onerror = () => reject(new Error('Network error during upload'))
+          xhr.send(file)
+        })
 
         toast.info('Preparing editor MP4 (hash + transcode)...')
 
         const prepRes = await fetch(`/api/projects/${id}/prepare-edit-asset`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ originalKey }),
+          body: JSON.stringify({ originalKey, clientCapture }),
         })
-        if (!prepRes.ok) {
-          const errBody = (await prepRes.json().catch(() => null)) as { error?: string } | null
-          throw new Error(errBody?.error || 'Failed to prepare edit asset')
+        const prepBody = (await prepRes.json().catch(() => null)) as {
+          error?: string
+          fileUrl?: string
+          originalFileUrl?: string
+          sha256Hash?: string
+          duration?: number
+          mediaMetadata?: StoredMediaMetadata
+        } | null
+        if (!prepRes.ok || !prepBody?.fileUrl) {
+          throw new Error(prepBody?.error || 'Failed to prepare edit asset')
         }
         const {
           fileUrl: editFileUrl,
@@ -917,7 +1076,7 @@ function LibraryPageContent() {
           sha256Hash,
           duration: probeDuration,
           mediaMetadata,
-        } = (await prepRes.json()) as {
+        } = prepBody as {
           fileUrl: string
           originalFileUrl: string
           sha256Hash: string
@@ -936,7 +1095,29 @@ function LibraryPageContent() {
             duration: probeDuration,
             mediaMetadata,
             transcriptionProgress: 50,
+            uploadProgress: undefined,
           },
+        })
+        setTree((prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            media: prev.media.map((m) =>
+              m.id === id
+                ? {
+                    ...m,
+                    status: 'transcribing',
+                    fileUrl: editFileUrl,
+                    originalFileUrl,
+                    sha256Hash,
+                    duration: probeDuration,
+                    mediaMetadata,
+                    transcriptionProgress: 50,
+                    uploadProgress: undefined,
+                  }
+                : m
+            ),
+          }
         })
         
         // 3. Transcribe from edit MP4 (browser + AssemblyAI–friendly)
@@ -964,36 +1145,41 @@ function LibraryPageContent() {
         if (!transcribeRes.ok) throw new Error('Failed to initiate transcription')
         const { assemblyAiId, transcriptId } = await transcribeRes.json()
 
-        let isDone = false
-        let attempts = 0
-        while (!isDone && attempts < 100) {
-          await new Promise((r) => setTimeout(r, 5000))
-          attempts++
-
-          const pollRes = await fetch(`/api/transcribe/${assemblyAiId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectId: id, transcriptId }),
+        const pollResult = await pollTranscriptionUntilComplete(assemblyAiId, id, transcriptId)
+        if (pollResult.ok) {
+          dispatch({
+            type: 'UPDATE_PROJECT',
+            id,
+            updates: {
+              status: 'ready',
+              transcriptionProgress: 100,
+              duration: pollResult.duration,
+            },
           })
-
-          const pollData = await pollRes.json()
-
-          if (pollData.status === 'completed') {
-            isDone = true
-            dispatch({
-              type: 'UPDATE_PROJECT',
-              id,
-              updates: {
-                status: 'ready',
-                transcriptionProgress: 100,
-                duration: pollData.duration,
-              },
-            })
-            await refetchTree()
-            toast.success('Media added securely and transcribed! Click to open editor.')
-          } else if (pollData.status === 'error') {
-            throw new Error('Transcription failed in AssemblyAI')
-          }
+          setTree((prev) => {
+            if (!prev) return prev
+            return {
+              ...prev,
+              media: prev.media.map((m) =>
+                m.id === id
+                  ? {
+                      ...m,
+                      status: 'ready',
+                      transcriptionProgress: 100,
+                      duration: pollResult.duration,
+                    }
+                  : m
+              ),
+            }
+          })
+          await refetchTree()
+          toast.success('Media added securely and transcribed! Click to open editor.')
+        } else if (pollResult.reason === 'error') {
+          throw new Error('Transcription failed in AssemblyAI')
+        } else if (pollResult.reason === 'timeout') {
+          throw new Error('Transcription timed out')
+        } else {
+          return
         }
 
       } catch (err) {
@@ -1002,6 +1188,15 @@ function LibraryPageContent() {
           type: 'UPDATE_PROJECT',
           id,
           updates: { status: 'error' },
+        })
+        setTree((prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            media: prev.media.map((m) =>
+              m.id === id ? { ...m, status: 'error' } : m
+            ),
+          }
         })
         await fetch(`/api/projects/${id}`, {
           method: 'PATCH',

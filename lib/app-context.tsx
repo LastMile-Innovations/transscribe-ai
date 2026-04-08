@@ -23,6 +23,13 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'ADD_PROJECT':
       return { ...state, projects: [action.project, ...state.projects] }
 
+    case 'DELETE_PROJECT':
+      return {
+        ...state,
+        projects: state.projects.filter((p) => p.id !== action.id),
+        activeProjectId: state.activeProjectId === action.id ? null : state.activeProjectId,
+      }
+
     case 'UPDATE_PROJECT':
       return {
         ...state,
