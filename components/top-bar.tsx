@@ -50,6 +50,7 @@ import { Label } from '@/components/ui/label'
 import { useApp } from '@/lib/app-context'
 import { getProjectData, listTranscriptsForMediaAction } from '@/lib/actions'
 import { preferredDurationMs, resolutionLabel } from '@/lib/media-metadata'
+import { pollTranscriptionUntilComplete } from '@/lib/transcription-poll-client'
 import type { TranscriptSummary, VideoProject } from '@/lib/types'
 
 function formatDuration(ms: number): string {
@@ -296,27 +297,20 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
       if (!transcribeRes.ok) throw new Error('start failed')
       const { assemblyAiId, transcriptId } = await transcribeRes.json()
 
-      let isDone = false
-      let attempts = 0
-      while (!isDone && attempts < 100) {
-        await new Promise((r) => setTimeout(r, 5000))
-        attempts++
-        const pollRes = await fetch(`/api/transcribe/${assemblyAiId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: mediaId, transcriptId }),
-        })
-        const pollData = await pollRes.json()
-        if (pollData.status === 'completed') {
-          isDone = true
-          setTranscriptList(await listTranscriptsForMediaAction(mediaId))
-          await switchTranscript(pollData.transcriptId as string)
-          toast.success('New transcript ready.')
-        } else if (pollData.status === 'error') {
-          throw new Error('assembly error')
-        }
+      const pollResult = await pollTranscriptionUntilComplete(assemblyAiId, mediaId, transcriptId)
+      if (pollResult.ok) {
+        setTranscriptList(await listTranscriptsForMediaAction(mediaId))
+        await switchTranscript(transcriptId)
+        toast.success('New transcript ready.')
+      } else if (pollResult.reason === 'error') {
+        toast.error(pollResult.assemblyError ?? 'Transcription failed.')
+        return
+      } else if (pollResult.reason === 'timeout') {
+        toast.error('Transcription timed out.')
+        return
+      } else {
+        return
       }
-      if (!isDone) throw new Error('timeout')
       setNewDialogOpen(false)
       setNewLabel('')
     } catch {

@@ -1175,7 +1175,7 @@ function LibraryPageContent() {
           await refetchTree()
           toast.success('Media added securely and transcribed! Click to open editor.')
         } else if (pollResult.reason === 'error') {
-          throw new Error('Transcription failed in AssemblyAI')
+          throw new Error(pollResult.assemblyError ?? 'Transcription failed in AssemblyAI')
         } else if (pollResult.reason === 'timeout') {
           throw new Error('Transcription timed out')
         } else {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { toast } from 'sonner'
 import {
   Plus,
@@ -285,29 +285,46 @@ export function TranscriptEditor() {
     )
   }
 
-  const filtered = searchTerm
-    ? transcript.segments.filter(
-        (s) =>
-          s.text.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          s.speaker.toLowerCase().includes(searchTerm.toLowerCase()),
-      )
-    : transcript.segments
+  const filtered = useMemo(() => {
+    if (!transcript) return []
+    if (!searchTerm) return transcript.segments
+    const lowerSearch = searchTerm.toLowerCase()
+    return transcript.segments.filter(
+      (s) =>
+        s.text.toLowerCase().includes(lowerSearch) ||
+        s.speaker.toLowerCase().includes(lowerSearch),
+    )
+  }, [transcript, searchTerm])
 
-  const activeSegmentId = transcript.segments.find(
-    (s) => playerTime >= s.start && playerTime <= s.end,
-  )?.id
+  const activeSegmentId = useMemo(() => {
+    if (!transcript) return null
+    return transcript.segments.find(
+      (s) => playerTime >= s.start && playerTime <= s.end,
+    )?.id
+  }, [transcript, playerTime])
 
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
-        <input
-          type="search"
-          placeholder="Search transcript..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="h-7 flex-1 rounded-md border border-input bg-transparent px-2.5 text-xs outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring/50"
-        />
+        <div className="relative flex-1">
+          <input
+            type="search"
+            placeholder="Search transcript..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="h-7 w-full rounded-md border border-input bg-transparent pl-2.5 pr-6 text-xs outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring/50"
+          />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-sm opacity-50 hover:opacity-100"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinelinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          )}
+        </div>
         <span className="shrink-0 text-xs text-muted-foreground">
           {filtered.length} / {transcript.segments.length}
         </span>

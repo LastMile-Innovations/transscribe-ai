@@ -5,7 +5,8 @@
 
 export type TranscriptionPollResult =
   | { ok: true; duration: number }
-  | { ok: false; reason: 'error' | 'timeout' | 'aborted' }
+  | { ok: false; reason: 'error'; assemblyError?: string }
+  | { ok: false; reason: 'timeout' | 'aborted' }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -51,13 +52,18 @@ export async function pollTranscriptionUntilComplete(
     const pollData = (await pollRes.json()) as {
       status?: string
       duration?: number
+      error?: string
     }
 
     if (pollData.status === 'completed') {
       return { ok: true, duration: pollData.duration ?? 0 }
     }
     if (pollData.status === 'error') {
-      return { ok: false, reason: 'error' }
+      return {
+        ok: false,
+        reason: 'error',
+        assemblyError: typeof pollData.error === 'string' ? pollData.error : undefined,
+      }
     }
   }
 

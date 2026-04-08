@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { toast } from 'sonner'
 import {
   Plus,
@@ -96,7 +96,10 @@ function OverlayCard({
       )}
     >
       {/* Card header */}
-      <div className="flex items-center gap-2 px-3 py-2">
+      <div 
+        className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-muted/50"
+        onClick={() => setExpanded(!expanded)}
+      >
         <div className="flex size-7 shrink-0 items-center justify-center rounded bg-muted">
           <Type className="size-3.5 text-muted-foreground" />
         </div>
@@ -106,7 +109,7 @@ function OverlayCard({
             {formatTime(overlay.startTime)} – {formatTime(overlay.endTime)}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -318,11 +321,13 @@ export function OverlayEditor() {
     toast.success('Overlay added at current time.')
   }
 
-  const visibleIds = new Set(
-    state.overlays
-      .filter((o) => currentTime >= o.startTime && currentTime <= o.endTime)
-      .map((o) => o.id),
-  )
+  const visibleIds = useMemo(() => {
+    return new Set(
+      state.overlays
+        .filter((o) => currentTime >= o.startTime && currentTime <= o.endTime)
+        .map((o) => o.id),
+    )
+  }, [state.overlays, currentTime])
 
   return (
     <div className="flex h-full flex-col">

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { toast } from 'sonner'
 import { RotateCcw, Scissors, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -78,9 +78,13 @@ export function TrimEditor() {
   const removedEnd = duration - trimRange.end
   const BARS = 100
 
-  const startPct = duration > 0 ? (trimRange.start / duration) * 100 : 0
-  const endPct = duration > 0 ? (trimRange.end / duration) * 100 : 100
-  const currentPct = duration > 0 ? (currentTime / duration) * 100 : 0
+  const { startPct, endPct, currentPct } = useMemo(() => {
+    return {
+      startPct: duration > 0 ? (trimRange.start / duration) * 100 : 0,
+      endPct: duration > 0 ? (trimRange.end / duration) * 100 : 100,
+      currentPct: duration > 0 ? (currentTime / duration) * 100 : 0,
+    }
+  }, [duration, trimRange.start, trimRange.end, currentTime])
 
   return (
     <div className="flex h-full flex-col gap-0">
@@ -169,18 +173,20 @@ export function TrimEditor() {
                 Reset
               </Button>
             </div>
-            {duration > 0 ? (
-              <Slider
-                min={0}
-                max={duration}
-                step={100}
-                value={[trimRange.start, trimRange.end]}
-                onValueChange={handleSliderChange}
-                className="[&_[data-slot=slider-range]]:bg-brand"
-              />
-            ) : (
-              <div className="h-4 rounded-full bg-muted" />
-            )}
+            <div onDoubleClick={handleReset} title="Double-click to reset trim">
+              {duration > 0 ? (
+                <Slider
+                  min={0}
+                  max={duration}
+                  step={100}
+                  value={[trimRange.start, trimRange.end]}
+                  onValueChange={handleSliderChange}
+                  className="[&_[data-slot=slider-range]]:bg-brand cursor-pointer"
+                />
+              ) : (
+                <div className="h-4 rounded-full bg-muted" />
+              )}
+            </div>
             <div className="flex items-center justify-between font-mono text-xs text-muted-foreground">
               <span>{formatTime(0)}</span>
               <span>{formatTime(duration)}</span>

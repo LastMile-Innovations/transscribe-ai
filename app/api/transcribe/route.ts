@@ -9,7 +9,8 @@ import { getObjectBodyStream, publicObjectUrl } from '@/lib/s3-storage'
 export const maxDuration = 300
 
 const apiKey = process.env.ASSEMBLYAI_API_KEY || ''
-const client = new AssemblyAI({ apiKey })
+const baseUrl = process.env.ASSEMBLYAI_BASE_URL || undefined
+const client = new AssemblyAI({ apiKey, baseUrl })
 
 export async function POST(request: Request) {
   let stream: NodeJS.ReadableStream | null = null
@@ -32,12 +33,16 @@ export async function POST(request: Request) {
 
     const speechModelsArray =
       options?.speechModel === 'fast' ? ['universal-2'] : ['universal-3-pro', 'universal-2']
+    const isUniversal2Only = speechModelsArray.length === 1 && speechModelsArray[0] === 'universal-2'
 
     const params: Record<string, unknown> = {
       speech_models: speechModelsArray,
       language_detection: options?.languageDetection ?? true,
       speaker_labels: options?.speakerLabels ?? true,
-      temperature: options?.temperature ?? 0.1,
+    }
+
+    if (!isUniversal2Only) {
+      params.temperature = options?.temperature ?? 0.1
     }
 
     if (publicUrl && !publicUrl.includes('localhost') && !publicUrl.includes('127.0.0.1')) {
@@ -65,10 +70,19 @@ export async function POST(request: Request) {
     if (params.speaker_labels) {
       if (options?.speakersExpected) {
         params.speakers_expected = options.speakersExpected
-      } else if (options?.minSpeakers || options?.maxSpeakers) {
-        params.speaker_options = {
-          min_speakers_expected: options.minSpeakers,
-          max_speakers_expected: options.maxSpeakers,
+      } else {
+        const min = options?.minSpeakers
+        const max = options?.maxSpeakers
+        if (
+          typeof min === 'number' &&
+          Number.isFinite(min) &&
+          typeof max === 'number' &&
+          Number.isFinite(max)
+        ) {
+          params.speaker_options = {
+            min_speakers_expected: min,
+            max_speakers_expected: max,
+          }
         }
       }
 
@@ -91,15 +105,15 @@ export async function POST(request: Request) {
     if (options?.redactPii) {
       params.redact_pii = true
       params.redact_pii_audio = false
-      params.redact_pii_sub = 'mask'
+      params.redact_pii_sub = 'hash'
       params.redact_pii_policies = [
         'person_name',
         'phone_number',
         'email_address',
         'us_social_security_number',
-        'us_drivers_license_number',
+        'drivers_license',
         'credit_card_number',
-        'mailing_address',
+        'location',
         'medical_condition',
         'date_of_birth',
       ]
