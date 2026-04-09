@@ -52,6 +52,11 @@
   --editor-video-chrome-muted: color-mix(in oklab, var(--editor-video-chrome-fg) 55%, transparent);
   --editor-video-controls-bg: color-mix(in oklab, white 8%, transparent);
   --editor-video-timeline-bg: color-mix(in oklab, black 35%, transparent);
+  --library-panel-border: color-mix(in oklab, white 60%, transparent);
+  --library-panel-bg: color-mix(in oklab, white 72%, transparent);
+  --library-panel-shadow: 0 22px 56px -46px rgba(0, 0, 0, 0.45);
+  --library-panel-shadow-strong: 0 24px 64px -46px rgba(0, 0, 0, 0.55);
+  --library-dropzone-bg: color-mix(in oklab, white 65%, transparent);
 }
 
 .dark {
@@ -101,6 +106,11 @@
   --editor-video-chrome-muted: color-mix(in oklab, var(--editor-video-chrome-fg) 50%, transparent);
   --editor-video-controls-bg: color-mix(in oklab, white 7%, transparent);
   --editor-video-timeline-bg: color-mix(in oklab, black 50%, transparent);
+  --library-panel-border: color-mix(in oklab, white 14%, transparent);
+  --library-panel-bg: color-mix(in oklab, var(--card) 90%, transparent);
+  --library-panel-shadow: 0 22px 56px -46px rgba(0, 0, 0, 0.55);
+  --library-panel-shadow-strong: 0 24px 64px -46px rgba(0, 0, 0, 0.65);
+  --library-dropzone-bg: color-mix(in oklab, var(--card) 88%, transparent);
 }
 
 @theme inline {
@@ -156,6 +166,46 @@
     background: var(--editor-panel-bg);
     border: 1px solid var(--editor-panel-border);
     box-shadow: var(--editor-panel-shadow);
+  }
+
+  .library-panel {
+    border-radius: 1.5rem;
+    border: 1px solid var(--library-panel-border);
+    background: var(--library-panel-bg);
+    box-shadow: var(--library-panel-shadow);
+    backdrop-filter: blur(24px);
+  }
+
+  .library-panel-sidebar {
+    border-radius: 1.8rem;
+    border: 1px solid var(--library-panel-border);
+    background: var(--library-panel-bg);
+    box-shadow: var(--library-panel-shadow-strong);
+    backdrop-filter: blur(24px);
+  }
+
+  .library-panel-accordion {
+    border-radius: 1.8rem;
+    border: 1px solid var(--library-panel-border);
+    background: var(--library-panel-bg);
+    box-shadow: 0 22px 56px -42px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(24px);
+  }
+
+  .library-dropzone {
+    border-radius: 1.75rem;
+    border: 1px solid var(--library-panel-border);
+    background: var(--library-dropzone-bg);
+    box-shadow: 0 24px 60px -46px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(12px);
+  }
+
+  .dark .library-panel-accordion {
+    box-shadow: 0 22px 56px -42px rgba(0, 0, 0, 0.6);
+  }
+
+  .dark .library-dropzone {
+    box-shadow: 0 24px 60px -46px rgba(0, 0, 0, 0.55);
   }
 }
 

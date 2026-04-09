@@ -164,3 +164,30 @@ export type AppAction =
   | { type: 'ADD_AI_MESSAGE'; message: AIMessage }
   | { type: 'UPDATE_AI_MESSAGE'; id: string; updates: Partial<AIMessage> }
   | { type: 'CLEAR_AI_MESSAGES' }
+
+/** Library URL / folder browse mode for `/?wp=&folder=`. */
+export type BrowseFilter = { mode: 'all' } | { mode: 'folder'; folderId: string | null }
+
+export type WorkspaceTreeData = {
+  workspace: WorkspaceProject
+  folders: Folder[]
+  media: VideoProject[]
+}
+
+export type WorkspaceMemberRow = {
+  userId: string
+  role: 'owner' | 'editor' | 'viewer'
+  createdAt: string
+  email?: string | null
+  displayName?: string | null
+  imageUrl?: string | null
+}
+
+export type MemberSearchHit = {
+  id: string
+  email: string | null
+  firstName: string | null
+  lastName: string | null
+  imageUrl: string | null
+  displayName: string
+}

@@ -21,10 +21,10 @@ export function LibraryUploadDropzone({
   return (
     <div
       className={cn(
-        'relative mb-8 flex flex-col items-center justify-center gap-5 overflow-hidden rounded-[1.75rem] border p-12 text-center transition-all duration-300 ease-out',
+        'library-dropzone relative mb-0 flex flex-col items-center justify-center gap-5 overflow-hidden p-12 text-center transition-all duration-300 ease-out',
         isDragOver
-          ? 'border-brand/40 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--color-brand)_14%,white),white)] scale-[1.01] shadow-[0_28px_65px_-40px_var(--color-brand)]'
-          : 'border-white/60 bg-white/65 shadow-[0_24px_60px_-46px_rgba(0,0,0,0.45)] hover:border-brand/30 hover:bg-white/80',
+          ? 'border-brand/40 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--color-brand)_14%,white),white)] scale-[1.01] shadow-[0_28px_65px_-40px_var(--color-brand)] dark:bg-[linear-gradient(135deg,color-mix(in_oklab,var(--color-brand)_22%,var(--card)),var(--card))]'
+          : 'hover:border-brand/30',
       )}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}

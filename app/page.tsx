@@ -3,26 +3,16 @@ import { AppProvider } from '@/lib/app-context'
 import { listWorkspaceMembersAction } from '@/lib/actions'
 import { projectRowToVideoProject } from '@/lib/db/mappers'
 import { getWorkspaceTree, listWorkspaceProjectsForUser } from '@/lib/db/queries'
-import type { Folder, VideoProject, WorkspaceProject } from '@/lib/types'
+import type {
+  BrowseFilter,
+  Folder,
+  VideoProject,
+  WorkspaceMemberRow,
+  WorkspaceProject,
+  WorkspaceTreeData,
+} from '@/lib/types'
 import { withAccessibleMediaUrls } from '@/lib/s3-storage'
 import { getAuthUserId } from '@/lib/workspace-access'
-
-type BrowseFilter = { mode: 'all' } | { mode: 'folder'; folderId: string | null }
-
-type WorkspaceTreeData = {
-  workspace: WorkspaceProject
-  folders: Folder[]
-  media: VideoProject[]
-}
-
-type WorkspaceMemberRow = {
-  userId: string
-  role: 'owner' | 'editor' | 'viewer'
-  createdAt: string
-  email?: string | null
-  displayName?: string | null
-  imageUrl?: string | null
-}
 
 function parseBrowseFilter(folder?: string): BrowseFilter {
   if (!folder) return { mode: 'all' }

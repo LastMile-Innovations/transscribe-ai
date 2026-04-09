@@ -19,19 +19,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { formatDateShort } from '@/lib/format-date'
 
 type WorkspaceSummary = {
   id: string
   name: string
   createdAt: Date
-}
-
-function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(date)
 }
 
 export function LibraryHeader({
@@ -196,7 +189,7 @@ export function WorkspaceList({
                 </div>
               </div>
               <span className="text-xs text-muted-foreground">
-                {formatDate(workspace.createdAt)}
+                {formatDateShort(workspace.createdAt)}
               </span>
             </button>
           ))

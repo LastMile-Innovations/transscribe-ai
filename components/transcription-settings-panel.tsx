@@ -76,8 +76,8 @@ export function TranscriptionSettingsPanel({
   onResetRecommended: () => void
 }) {
   return (
-    <div className="mb-8">
-      <Accordion type="single" collapsible className="w-full rounded-[1.8rem] border border-white/60 bg-white/72 px-6 shadow-[0_22px_56px_-42px_rgba(0,0,0,0.5)]">
+    <div className="mb-0">
+      <Accordion type="single" collapsible className="library-panel-accordion w-full px-6">
         <AccordionItem value="settings" className="border-0">
           <AccordionTrigger className="py-5 text-sm font-semibold hover:no-underline">
             <div className="flex items-center gap-3 text-left">
