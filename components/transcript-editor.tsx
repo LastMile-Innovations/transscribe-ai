@@ -7,6 +7,7 @@ import {
   Trash2,
   Merge,
   Copy,
+  Download,
   CheckCircle2,
   Loader2,
   AlertCircle,
@@ -56,6 +57,7 @@ import {
 } from '@/components/ui/input-group'
 import { Kbd } from '@/components/ui/kbd'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useApp } from '@/lib/app-context'
 import type { TranscriptSegment } from '@/lib/types'
@@ -252,6 +254,7 @@ function SegmentRow({
   onMerge,
   onSplit,
   onManageSpeaker,
+  showWordTimings,
 }: {
   segment: TranscriptSegment
   isActive: boolean
@@ -265,6 +268,7 @@ function SegmentRow({
   onMerge: (primaryId: string, secondaryId: string) => void
   onSplit: (segment: TranscriptSegment, splitIndex: number) => void
   onManageSpeaker: (speaker: string) => void
+  showWordTimings: boolean
 }) {
   const { dispatch } = useApp()
   const rowRef = useRef<HTMLDivElement>(null)
@@ -548,6 +552,39 @@ function SegmentRow({
             placeholder="Transcript text..."
           />
 
+          {showWordTimings && (
+            <div className="rounded-xl border border-border/60 bg-background/60 px-3 py-2">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <Badge variant="secondary" className="rounded-full px-2 py-0 text-[10px] uppercase tracking-[0.16em]">
+                  Word timings
+                </Badge>
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {segment.words?.length ?? 0} words
+                </span>
+              </div>
+              {segment.words && segment.words.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {segment.words.map((word, index) => (
+                    <button
+                      key={`${segment.id}-word-${index}-${word.start}`}
+                      type="button"
+                      onClick={() => onSeek(word.start)}
+                      className="rounded-lg border border-border/60 bg-background px-2 py-1 text-left font-mono text-[10px] transition-colors hover:border-brand/40 hover:bg-brand/5"
+                      title={`Seek to ${word.text}`}
+                    >
+                      <span className="block text-muted-foreground">
+                        {formatTime(word.start)}-{formatTime(word.end)}
+                      </span>
+                      <span className="block text-foreground">{word.text}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="font-mono text-[11px] text-muted-foreground">No word timestamps</p>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <ConfidenceBar value={segment.confidence} />
@@ -583,6 +620,7 @@ export function TranscriptEditor() {
   const { state, dispatch } = useApp()
   const [searchTerm, setSearchTerm] = useState('')
   const [speakerFilter, setSpeakerFilter] = useState<string | null>(null)
+  const [showWordTimings, setShowWordTimings] = useState(false)
   const [segmentStates, setSegmentStates] = useState<Record<string, SegmentSaveState>>({})
   const [speakerDialogOpen, setSpeakerDialogOpen] = useState(false)
   const [selectedSpeaker, setSelectedSpeaker] = useState('')
@@ -592,6 +630,7 @@ export function TranscriptEditor() {
 
   const transcript = state.transcript
   const playerTime = state.playerTime
+  const activeProjectId = state.activeProjectId
 
   const setSegmentStatus = useCallback((segmentId: string, status: SegmentSaveState) => {
     const currentTimer = resetTimersRef.current[segmentId]
@@ -696,6 +735,19 @@ export function TranscriptEditor() {
     navigator.clipboard.writeText(text)
     toast.success('Full transcript copied to clipboard.')
   }
+
+  const handleExportJson = useCallback(() => {
+    if (!transcript || !activeProjectId) {
+      toast.error('No transcript to export.')
+      return
+    }
+
+    const url = new URL(`/api/projects/${activeProjectId}/transcript-export`, window.location.origin)
+    url.searchParams.set('transcriptId', transcript.id)
+    const anchor = document.createElement('a')
+    anchor.href = url.toString()
+    anchor.click()
+  }, [activeProjectId, transcript])
 
   const openSpeakerManager = useCallback((speaker: string) => {
     setSelectedSpeaker(speaker)
@@ -970,6 +1022,10 @@ export function TranscriptEditor() {
                 <Copy className="size-3" />
                 Copy all
               </Button>
+              <Button variant="outline" size="sm" onClick={handleExportJson} className="h-9 gap-1 rounded-full px-3 text-xs">
+                <Download className="size-3.5" />
+                Export JSON
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -985,9 +1041,14 @@ export function TranscriptEditor() {
                 Manage speakers
               </Button>
             </ButtonGroup>
-            <Badge variant="secondary" className="rounded-full px-3 text-[11px] uppercase tracking-[0.16em]">
-              Transcript workspace
-            </Badge>
+            <div className="flex items-center gap-3 rounded-full border border-border/60 bg-background px-3 py-1.5">
+              <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Word timings</span>
+              <Switch
+                checked={showWordTimings}
+                onCheckedChange={setShowWordTimings}
+                aria-label="Toggle per-word transcript timings"
+              />
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -1072,6 +1133,7 @@ export function TranscriptEditor() {
                 onMerge={handleMerge}
                 onSplit={handleSplit}
                 onManageSpeaker={openSpeakerManager}
+                showWordTimings={showWordTimings}
               />
             )
           })}
