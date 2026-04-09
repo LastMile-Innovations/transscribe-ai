@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Columns2, GripVertical, PanelTop, PictureInPicture2 } from 'lucide-react'
 import {
   ResizableHandle,
@@ -172,12 +172,41 @@ function EditorFloatingPlayer({ children }: { children: React.ReactNode }) {
   )
 }
 
+const LAYOUT_MODES: {
+  value: EditorLayoutMode
+  icon: ReactNode
+  label: string
+  tip: string
+}[] = [
+  {
+    value: 'split',
+    icon: <Columns2 className="size-3.5" />,
+    label: 'Split',
+    tip: 'Side-by-side editor and video',
+  },
+  {
+    value: 'stacked',
+    icon: <PanelTop className="size-3.5" />,
+    label: 'Stacked',
+    tip: 'Video above editor',
+  },
+  {
+    value: 'focus',
+    icon: <PictureInPicture2 className="size-3.5" />,
+    label: 'Focus',
+    tip: 'Maximize editor; video in a dock',
+  },
+]
+
 function LayoutToolbar({
   mode,
   setMode,
+  layoutTooltipsEnabled,
 }: {
   mode: EditorLayoutMode
   setMode: (m: EditorLayoutMode) => void
+  /** When false (compact editor width), show visible labels and skip hover tooltips for touch. */
+  layoutTooltipsEnabled: boolean
 }) {
   return (
     <div
@@ -195,41 +224,40 @@ function LayoutToolbar({
         size="sm"
         className="rounded-lg bg-card/40 p-0.5"
       >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <ToggleGroupItem value="split" className="gap-1.5 px-2.5 text-xs" aria-label="Split view">
-              <Columns2 className="size-3.5" />
-              <span className="hidden sm:inline">Split</span>
+        {LAYOUT_MODES.map(({ value, icon, label, tip }) => {
+          const item = (
+            <ToggleGroupItem
+              value={value}
+              className="gap-1.5 px-2.5 text-xs"
+              aria-label={`${label} view`}
+            >
+              {icon}
+              <span className={layoutTooltipsEnabled ? 'hidden sm:inline' : 'inline'}>{label}</span>
             </ToggleGroupItem>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Side-by-side editor and video</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <ToggleGroupItem value="stacked" className="gap-1.5 px-2.5 text-xs" aria-label="Stacked view">
-              <PanelTop className="size-3.5" />
-              <span className="hidden sm:inline">Stacked</span>
-            </ToggleGroupItem>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Video above editor</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <ToggleGroupItem value="focus" className="gap-1.5 px-2.5 text-xs" aria-label="Focus view">
-              <PictureInPicture2 className="size-3.5" />
-              <span className="hidden sm:inline">Focus</span>
-            </ToggleGroupItem>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Maximize editor; video in a dock</TooltipContent>
-        </Tooltip>
+          )
+          return layoutTooltipsEnabled ? (
+            <Tooltip key={value}>
+              <TooltipTrigger asChild>{item}</TooltipTrigger>
+              <TooltipContent side="bottom">{tip}</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Fragment key={value}>{item}</Fragment>
+          )
+        })}
       </ToggleGroup>
-      <p className="text-[10px] text-muted-foreground">
-        <kbd className="rounded border border-border/80 bg-muted/50 px-1 py-0.5 font-mono">⌘</kbd>
-        <span className="mx-0.5">/</span>
-        <kbd className="rounded border border-border/80 bg-muted/50 px-1 py-0.5 font-mono">Ctrl</kbd>
-        <kbd className="ml-0.5 rounded border border-border/80 bg-muted/50 px-1 py-0.5 font-mono">\</kbd>
-        <span className="ml-1.5">Cycle layout</span>
-      </p>
+      {layoutTooltipsEnabled ? (
+        <p className="text-[10px] text-muted-foreground">
+          <kbd className="rounded border border-border/80 bg-muted/50 px-1 py-0.5 font-mono">⌘</kbd>
+          <span className="mx-0.5">/</span>
+          <kbd className="rounded border border-border/80 bg-muted/50 px-1 py-0.5 font-mono">Ctrl</kbd>
+          <kbd className="ml-0.5 rounded border border-border/80 bg-muted/50 px-1 py-0.5 font-mono">\</kbd>
+          <span className="ml-1.5">Cycle layout</span>
+        </p>
+      ) : (
+        <p className="max-w-[15rem] text-[10px] leading-snug text-muted-foreground">
+          Tap the video to play or pause. With a keyboard: J/L skip 5s, Space play/pause, ⌘/Ctrl+\ cycles layout.
+        </p>
+      )}
     </div>
   )
 }
@@ -252,8 +280,15 @@ export function EditorShell() {
     return () => window.removeEventListener('editor:cycle-layout', onCycle)
   }, [cycle])
 
-  const renderVideo = (layout: 'sidebar' | 'dock', omitDockHeader?: boolean) => (
-    <VideoPlayer layout={layout} omitDockHeader={omitDockHeader} />
+  const renderVideo = (
+    layout: 'sidebar' | 'dock',
+    opts?: { omitDockHeader?: boolean; showTouchPlaybackHint?: boolean },
+  ) => (
+    <VideoPlayer
+      layout={layout}
+      omitDockHeader={opts?.omitDockHeader}
+      showTouchPlaybackHint={opts?.showTouchPlaybackHint}
+    />
   )
 
   /* Desktop: split */
@@ -293,7 +328,7 @@ export function EditorShell() {
       <WorkPanel className="h-full">
         <EditorTabs />
       </WorkPanel>
-      <EditorFloatingPlayer>{renderVideo('dock', true)}</EditorFloatingPlayer>
+      <EditorFloatingPlayer>{renderVideo('dock', { omitDockHeader: true })}</EditorFloatingPlayer>
     </div>
   )
 
@@ -304,7 +339,7 @@ export function EditorShell() {
         <EditorTabs />
       </div>
       <div className="h-[35vh] min-h-[17rem] shrink-0 border-t border-[color:var(--editor-panel-border)] bg-[color:var(--editor-canvas)]">
-        {renderVideo('sidebar')}
+        {renderVideo('sidebar', { showTouchPlaybackHint: true })}
       </div>
     </div>
   )
@@ -313,7 +348,7 @@ export function EditorShell() {
   const mobileStacked = (
     <div className="flex h-full min-h-0 flex-col gap-0 overflow-hidden rounded-xl editor-workspace-panel">
       <div className="h-[38vh] min-h-[12rem] shrink-0 border-b border-[color:var(--editor-panel-border)]">
-        {renderVideo('sidebar')}
+        {renderVideo('sidebar', { showTouchPlaybackHint: true })}
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         <EditorTabs />
@@ -334,7 +369,7 @@ export function EditorShell() {
           maxHeight: 'min(42vh, 280px)',
         }}
       >
-        {renderVideo('dock')}
+        {renderVideo('dock', { showTouchPlaybackHint: true })}
       </div>
     </div>
   )
@@ -356,11 +391,16 @@ export function EditorShell() {
         <LayoutToolbar
           mode={hydrated ? mode : 'split'}
           setMode={setMode}
+          layoutTooltipsEnabled
         />
       )}
       {!lg && (
         <div className="mb-2 flex shrink-0 justify-end sm:justify-start">
-          <LayoutToolbar mode={hydrated ? mode : 'split'} setMode={setMode} />
+          <LayoutToolbar
+            mode={hydrated ? mode : 'split'}
+            setMode={setMode}
+            layoutTooltipsEnabled={false}
+          />
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-hidden">

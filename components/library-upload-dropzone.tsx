@@ -24,7 +24,7 @@ export function LibraryUploadDropzone({
   return (
     <div
       className={cn(
-        'library-dropzone relative mb-0 flex flex-col items-center justify-center gap-5 overflow-hidden p-8 text-center transition-all duration-300 ease-out sm:p-12',
+        'library-dropzone relative mb-0 flex flex-col items-center justify-center gap-4 overflow-hidden p-5 text-center transition-all duration-300 ease-out sm:gap-5 sm:p-8 md:p-12',
         isDragOver
           ? 'border-brand/40 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--color-brand)_14%,white),white)] scale-[1.01] shadow-[0_28px_65px_-40px_var(--color-brand)] dark:bg-[linear-gradient(135deg,color-mix(in_oklab,var(--color-brand)_22%,var(--card)),var(--card))]'
           : 'hover:border-brand/30',
@@ -44,16 +44,21 @@ export function LibraryUploadDropzone({
       >
         <UploadCloud className={cn('size-8', isDragOver && 'animate-bounce')} />
       </div>
-      <div className="relative z-10 flex w-full max-w-lg flex-col items-center gap-3">
-        <p className="text-xl font-semibold tracking-tight">
-          {isDragOver ? 'Drop videos to upload' : 'Drag & drop videos here (computer)'}
+      <div className="relative z-10 flex w-full max-w-lg flex-col items-center gap-2.5 sm:gap-3">
+        <p className="text-lg font-semibold tracking-tight sm:text-xl">
+          {isDragOver ? 'Drop videos to upload' : (
+            <>
+              <span className="md:hidden">Add videos from your device</span>
+              <span className="hidden md:inline">Drag & drop videos here (computer)</span>
+            </>
+          )}
         </p>
 
         <label
           htmlFor={fileInputId}
           className={cn(
             buttonVariants({ size: 'lg' }),
-            'min-h-12 w-full cursor-pointer justify-center gap-2 border-0 px-6 text-base font-semibold shadow-[0_18px_34px_-18px_var(--color-brand)] sm:w-auto',
+            'min-h-11 w-full cursor-pointer touch-manipulation justify-center gap-2 border-0 px-5 text-[15px] font-semibold shadow-[0_18px_34px_-18px_var(--color-brand)] sm:min-h-12 sm:px-6 sm:text-base md:w-auto',
             'bg-[linear-gradient(135deg,var(--color-brand),color-mix(in_oklab,var(--color-brand)_60%,black))] text-brand-foreground hover:brightness-105',
             disabled && 'pointer-events-none opacity-50',
           )}
@@ -62,10 +67,13 @@ export function LibraryUploadDropzone({
           Choose videos to upload
         </label>
 
-        <p className="max-w-md text-pretty text-sm leading-relaxed text-muted-foreground">
+        <p className="hidden max-w-md text-pretty text-sm leading-relaxed text-muted-foreground md:block">
           On a phone or tablet, you can usually pick several videos at once: look for &ldquo;Select&rdquo; or checkboxes,
           then tap each video, then confirm. For large files, keep this tab in the foreground until the transfer finishes;
           plug in if you can. iOS Low Power Mode may slow uploads.
+        </p>
+        <p className="max-w-md text-pretty text-xs leading-relaxed text-muted-foreground md:hidden">
+          You can select multiple videos in the picker. Keep this tab open while uploading large files.
         </p>
 
         <p className="text-sm leading-6 text-muted-foreground">

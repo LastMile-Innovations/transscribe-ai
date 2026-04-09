@@ -77,9 +77,9 @@ export function TranscriptionSettingsPanel({
 }) {
   return (
     <div className="mb-0">
-      <Accordion type="single" collapsible className="library-panel-accordion w-full px-6">
+      <Accordion type="single" collapsible className="library-panel-accordion w-full px-3 md:px-6">
         <AccordionItem value="settings" className="border-0">
-          <AccordionTrigger className="py-5 text-sm font-semibold hover:no-underline">
+          <AccordionTrigger className="py-4 text-sm font-semibold hover:no-underline md:py-5">
             <div className="flex items-center gap-3 text-left">
               <div className="flex size-10 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,color-mix(in_oklab,var(--color-brand)_16%,white),white)] text-brand shadow-inner">
                 <Sparkles className="size-4" />

@@ -703,6 +703,10 @@ export function EditorTopBarActions({
           <DialogHeader>
             <DialogTitle>Keyboard shortcuts</DialogTitle>
           </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            On a phone or tablet, connect an external keyboard to use these. You can still tap the video to
+            play or pause and use on-screen controls to seek.
+          </p>
           <div className="flex flex-col gap-3 text-sm">
             {[
               ['Play / Pause', 'Space'],

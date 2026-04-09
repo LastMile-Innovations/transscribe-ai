@@ -31,10 +31,13 @@ const PLAYBACK_URL_REFRESH_BUFFER_MS = 5 * 60 * 1000
 export function VideoPlayer({
   layout = 'default',
   omitDockHeader = false,
+  showTouchPlaybackHint = false,
 }: {
   layout?: 'default' | 'sidebar' | 'dock'
   /** When layout is dock inside a floating shell, hide the inner title row (parent supplies chrome). */
   omitDockHeader?: boolean
+  /** When true (compact editor layouts), add tap-to-play copy next to keyboard shortcuts. */
+  showTouchPlaybackHint?: boolean
 }) {
   const authedFetch = useAuthedFetch()
   const { state, dispatch } = useApp()
@@ -538,6 +541,11 @@ export function VideoPlayer({
 
         {!isDock && (
           <div className="flex flex-wrap items-center gap-2 text-[10px] text-[color:var(--editor-video-chrome-muted)]">
+            {showTouchPlaybackHint && (
+              <span className="w-full text-[color:var(--editor-video-chrome-fg)] sm:w-auto">
+                Tap the video to play or pause.
+              </span>
+            )}
             <Badge variant="outline" className={cn(badgeClass, 'text-[color:var(--editor-video-chrome-muted)]')}>
               <Keyboard className="size-3.5" />
               Shortcuts
@@ -551,7 +559,9 @@ export function VideoPlayer({
             <Kbd className="border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] text-[color:var(--editor-video-chrome-fg)]">
               L
             </Kbd>
-            <span>Play / back 5s / forward 5s</span>
+            <span>
+              {showTouchPlaybackHint ? 'With a keyboard: play / back 5s / forward 5s' : 'Play / back 5s / forward 5s'}
+            </span>
             <span className="hidden sm:inline">{` · ⌘ + \\ cycle layout`}</span>
           </div>
         )}

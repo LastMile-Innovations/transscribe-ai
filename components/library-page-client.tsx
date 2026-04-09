@@ -652,136 +652,148 @@ export function LibraryPageClient({
             onNewFolder={openNewFolder}
             onSubfolderHere={openSubfolderHere}
           />
-          <main className="mx-auto min-h-0 w-full max-w-5xl flex-1 overflow-y-auto px-4 py-6 lg:px-8">
-            <div className="flex flex-col gap-8">
-              <LibraryMobileBrowse
-                folders={tree?.folders ?? []}
-                browseFilter={browseFilter}
-                setBrowseFilter={setBrowseFilter}
-                viewerLocked={viewerLocked}
-                onNewFolder={openNewFolder}
-                onSubfolderHere={openSubfolderHere}
-                onDeleteCurrentFolder={() => {
-                  if (browseFilter.mode === 'folder' && browseFilter.folderId != null) {
-                    void deleteFolderById(browseFilter.folderId)
-                  }
-                }}
-              />
-
-              <LibraryHero />
-
-              <LibraryUploadDropzone
-                disabled={viewerLocked}
-                fileInputId={LIBRARY_VIDEO_FILE_INPUT_ID}
-                isDragOver={isDragOver}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  if (!viewerLocked) setIsDragOver(true)
-                }}
-                onDragLeave={() => setIsDragOver(false)}
-                onDrop={
-                  viewerLocked
-                    ? (e) => {
-                        e.preventDefault()
-                        setIsDragOver(false)
-                      }
-                    : onDrop
-                }
-                onBrowse={() => fileInputRef.current?.click()}
-              />
-
-              <TranscriptionSettingsPanel
-                speechModel={speechModel}
-                setSpeechModel={setSpeechModel}
-                speakerLabels={speakerLabels}
-                setSpeakerLabels={setSpeakerLabels}
-                languageDetection={languageDetection}
-                setLanguageDetection={setLanguageDetection}
-                temperature={temperature}
-                setTemperature={setTemperature}
-                keyterms={keyterms}
-                setKeyterms={setKeyterms}
-                customPrompt={customPrompt}
-                setCustomPrompt={setCustomPrompt}
-                speakersExpected={speakersExpected}
-                setSpeakersExpected={setSpeakersExpected}
-                minSpeakers={minSpeakers}
-                setMinSpeakers={setMinSpeakers}
-                maxSpeakers={maxSpeakers}
-                setMaxSpeakers={setMaxSpeakers}
-                knownSpeakers={knownSpeakers}
-                setKnownSpeakers={setKnownSpeakers}
-                redactPii={redactPii}
-                setRedactPii={setRedactPii}
-                autoTranscribe={autoTranscribe}
-                setAutoTranscribe={setAutoTranscribe}
-                onResetRecommended={() => {
-                  setSpeechModel(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
-                  setSpeakerLabels(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
-                  setLanguageDetection(DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection)
-                  setTemperature([DEFAULT_TRANSCRIPTION_OPTIONS.temperature])
-                  setKeyterms(DEFAULT_TRANSCRIPTION_OPTIONS.keyterms ?? '')
-                  setCustomPrompt(DEFAULT_TRANSCRIPTION_PROMPT)
-                  setSpeakersExpected('')
-                  setMinSpeakers('')
-                  setMaxSpeakers('')
-                  setKnownSpeakers(DEFAULT_TRANSCRIPTION_OPTIONS.knownSpeakers ?? '')
-                  setRedactPii(DEFAULT_TRANSCRIPTION_OPTIONS.redactPii ?? false)
-                }}
-              />
-
-              <div className="library-panel flex flex-wrap items-center gap-3 p-4">
-                <div className="relative min-w-48 flex-1">
-                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search projects..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="border-[var(--library-panel-border)] bg-background/80 pl-9"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Filter className="size-4 text-muted-foreground" />
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-40 border-[var(--library-panel-border)] bg-background/80">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All statuses</SelectItem>
-                      <SelectItem value="ready">Ready</SelectItem>
-                      <SelectItem value="awaiting_transcript">Needs transcript</SelectItem>
-                      <SelectItem value="preparing">Preparing</SelectItem>
-                      <SelectItem value="queued_prepare">Queued for prep</SelectItem>
-                      <SelectItem value="transcribing">Transcribing</SelectItem>
-                      <SelectItem value="uploading">Uploading</SelectItem>
-                      <SelectItem value="error">Error</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <span className="text-sm text-muted-foreground">
-                  {filteredMedia.length} file{filteredMedia.length !== 1 ? 's' : ''}
-                </span>
+          <main className="mx-auto min-h-0 w-full max-w-5xl flex-1 overflow-y-auto px-3 py-4 md:px-4 md:py-6 lg:px-8">
+            <div className="flex flex-col gap-5 md:gap-8">
+              {/* Phone order: browse → upload → projects → intro → transcription settings (md+: document order) */}
+              <div className="order-1 md:order-none">
+                <LibraryMobileBrowse
+                  folders={tree?.folders ?? []}
+                  browseFilter={browseFilter}
+                  setBrowseFilter={setBrowseFilter}
+                  viewerLocked={viewerLocked}
+                  onNewFolder={openNewFolder}
+                  onSubfolderHere={openSubfolderHere}
+                  onDeleteFolder={(id) => void deleteFolderById(id)}
+                  onDeleteCurrentFolder={() => {
+                    if (browseFilter.mode === 'folder' && browseFilter.folderId != null) {
+                      void deleteFolderById(browseFilter.folderId)
+                    }
+                  }}
+                />
               </div>
 
-              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredMedia.length === 0 ? (
-                  <LibraryEmptyState hasFilter={hasFilter} />
-                ) : (
-                  filteredMedia.map((project) => (
-                    <LibraryProjectCard
-                      key={project.id}
-                      project={project}
-                      onOpen={handleOpen}
-                      folderOptions={folderOpts}
-                      onMoveToFolder={viewerLocked ? undefined : moveMediaToFolder}
-                      onRenameTitle={viewerLocked ? undefined : renameMediaProject}
-                      onStartTranscription={viewerLocked ? undefined : startTranscriptionForProject}
-                      onRetryPrepare={viewerLocked ? undefined : retryPrepare}
-                      onCancelUpload={viewerLocked ? undefined : cancelUpload}
-                      onDeleteMedia={viewerLocked ? undefined : deleteMediaProject}
+              <div className="order-4 md:order-none">
+                <LibraryHero />
+              </div>
+
+              <div className="order-2 md:order-none">
+                <LibraryUploadDropzone
+                  disabled={viewerLocked}
+                  fileInputId={LIBRARY_VIDEO_FILE_INPUT_ID}
+                  isDragOver={isDragOver}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    if (!viewerLocked) setIsDragOver(true)
+                  }}
+                  onDragLeave={() => setIsDragOver(false)}
+                  onDrop={
+                    viewerLocked
+                      ? (e) => {
+                          e.preventDefault()
+                          setIsDragOver(false)
+                        }
+                      : onDrop
+                  }
+                  onBrowse={() => fileInputRef.current?.click()}
+                />
+              </div>
+
+              <div className="order-5 md:order-none">
+                <TranscriptionSettingsPanel
+                  speechModel={speechModel}
+                  setSpeechModel={setSpeechModel}
+                  speakerLabels={speakerLabels}
+                  setSpeakerLabels={setSpeakerLabels}
+                  languageDetection={languageDetection}
+                  setLanguageDetection={setLanguageDetection}
+                  temperature={temperature}
+                  setTemperature={setTemperature}
+                  keyterms={keyterms}
+                  setKeyterms={setKeyterms}
+                  customPrompt={customPrompt}
+                  setCustomPrompt={setCustomPrompt}
+                  speakersExpected={speakersExpected}
+                  setSpeakersExpected={setSpeakersExpected}
+                  minSpeakers={minSpeakers}
+                  setMinSpeakers={setMinSpeakers}
+                  maxSpeakers={maxSpeakers}
+                  setMaxSpeakers={setMaxSpeakers}
+                  knownSpeakers={knownSpeakers}
+                  setKnownSpeakers={setKnownSpeakers}
+                  redactPii={redactPii}
+                  setRedactPii={setRedactPii}
+                  autoTranscribe={autoTranscribe}
+                  setAutoTranscribe={setAutoTranscribe}
+                  onResetRecommended={() => {
+                    setSpeechModel(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
+                    setSpeakerLabels(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
+                    setLanguageDetection(DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection)
+                    setTemperature([DEFAULT_TRANSCRIPTION_OPTIONS.temperature])
+                    setKeyterms(DEFAULT_TRANSCRIPTION_OPTIONS.keyterms ?? '')
+                    setCustomPrompt(DEFAULT_TRANSCRIPTION_PROMPT)
+                    setSpeakersExpected('')
+                    setMinSpeakers('')
+                    setMaxSpeakers('')
+                    setKnownSpeakers(DEFAULT_TRANSCRIPTION_OPTIONS.knownSpeakers ?? '')
+                    setRedactPii(DEFAULT_TRANSCRIPTION_OPTIONS.redactPii ?? false)
+                  }}
+                />
+              </div>
+
+              <div className="order-3 flex flex-col gap-5 md:order-none md:gap-8">
+                <div className="library-panel flex flex-col gap-3 p-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 sm:p-4">
+                  <div className="relative min-w-0 flex-1 sm:min-w-48">
+                    <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder="Search projects..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      className="border-[var(--library-panel-border)] bg-background/80 pl-9"
                     />
-                  ))
-                )}
+                  </div>
+                  <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                    <Filter className="size-4 shrink-0 text-muted-foreground" />
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="min-w-0 flex-1 border-[var(--library-panel-border)] bg-background/80 sm:w-40 sm:flex-none">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        <SelectItem value="ready">Ready</SelectItem>
+                        <SelectItem value="awaiting_transcript">Needs transcript</SelectItem>
+                        <SelectItem value="preparing">Preparing</SelectItem>
+                        <SelectItem value="queued_prepare">Queued for prep</SelectItem>
+                        <SelectItem value="transcribing">Transcribing</SelectItem>
+                        <SelectItem value="uploading">Uploading</SelectItem>
+                        <SelectItem value="error">Error</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <span className="w-full text-sm text-muted-foreground sm:ml-auto sm:w-auto">
+                      {filteredMedia.length} file{filteredMedia.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3">
+                  {filteredMedia.length === 0 ? (
+                    <LibraryEmptyState hasFilter={hasFilter} />
+                  ) : (
+                    filteredMedia.map((project) => (
+                      <LibraryProjectCard
+                        key={project.id}
+                        project={project}
+                        onOpen={handleOpen}
+                        folderOptions={folderOpts}
+                        onMoveToFolder={viewerLocked ? undefined : moveMediaToFolder}
+                        onRenameTitle={viewerLocked ? undefined : renameMediaProject}
+                        onStartTranscription={viewerLocked ? undefined : startTranscriptionForProject}
+                        onRetryPrepare={viewerLocked ? undefined : retryPrepare}
+                        onCancelUpload={viewerLocked ? undefined : cancelUpload}
+                        onDeleteMedia={viewerLocked ? undefined : deleteMediaProject}
+                      />
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           </main>

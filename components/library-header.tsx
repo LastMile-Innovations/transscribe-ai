@@ -111,7 +111,7 @@ export function LibraryHeader({
           {hasWorkspace && (
             <Button
               size="sm"
-              className="bg-[linear-gradient(135deg,var(--color-brand),color-mix(in_oklab,var(--color-brand)_60%,black))] text-brand-foreground shadow-[0_18px_34px_-18px_var(--color-brand)] hover:brightness-105"
+              className="touch-manipulation bg-[linear-gradient(135deg,var(--color-brand),color-mix(in_oklab,var(--color-brand)_60%,black))] text-brand-foreground shadow-[0_18px_34px_-18px_var(--color-brand)] hover:brightness-105"
               disabled={viewerLocked}
               title={viewerLocked ? 'Viewers cannot upload' : 'Add one or more videos from your device'}
               onClick={onOpenUpload}

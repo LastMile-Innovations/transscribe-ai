@@ -75,14 +75,14 @@ export default function EditorPageClient({
 
   if (!project)
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center bg-background">
         <div className="animate-pulse text-brand">Loading project...</div>
       </div>
     )
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 md:p-4">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2 sm:p-3 md:p-4">
         <EditorShell />
       </div>
 
@@ -92,7 +92,8 @@ export default function EditorPageClient({
           size="lg"
           className={cn(
             'fixed z-40 h-12 w-12 rounded-full border border-border/80 bg-card p-0 shadow-lg',
-            'bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[max(1.25rem,env(safe-area-inset-left))]',
+            // Bottom-right avoids overlap with video timeline/controls (anchored bottom on mobile)
+            'bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-[max(1.25rem,env(safe-area-inset-right))]',
             'hover:bg-accent hover:text-accent-foreground',
           )}
           onClick={() => setAiOpen(true)}

@@ -37,8 +37,10 @@ export default async function EditorPage({
         overlays: data.overlays ?? [],
       }}
     >
-      <TopBar project={data.project} initialTranscriptList={transcriptList} />
-      <EditorPageClient projectId={id} />
+      <div className="flex min-h-dvh flex-col overflow-hidden bg-background">
+        <TopBar project={data.project} initialTranscriptList={transcriptList} />
+        <EditorPageClient projectId={id} />
+      </div>
     </AppProvider>
   )
 }

@@ -54,7 +54,7 @@ export function TopBar({
   const libraryHref = project.workspaceProjectId ? `/?wp=${project.workspaceProjectId}` : '/'
 
   return (
-    <header className="border-b border-border/60 bg-background/85 backdrop-blur-md">
+    <header className="shrink-0 border-b border-border/60 bg-background/85 backdrop-blur-md">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 md:px-4">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Button variant="ghost" size="icon-sm" asChild>

@@ -26,7 +26,7 @@ export function LibraryFolderSidebar({
   onSubfolderHere: () => void
 }) {
   return (
-    <aside className="hidden w-72 shrink-0 lg:flex lg:flex-col">
+    <aside className="hidden w-72 shrink-0 md:flex md:flex-col">
       <div className="library-panel-sidebar sticky top-24 overflow-hidden">
         <div className="border-b border-border/60 p-4">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Workspace</p>
