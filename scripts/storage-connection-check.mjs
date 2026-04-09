@@ -1,9 +1,13 @@
 import {
+  AbortMultipartUploadCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  GetBucketCorsCommand,
   HeadBucketCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import dotenv from 'dotenv'
@@ -48,6 +52,15 @@ function publicObjectUrl(bucket, key) {
   return `${minioPublic}/${bucket}/${key.split('/').map(encodeURIComponent).join('/')}`
 }
 
+function corsExposesEtag(rules) {
+  return (rules || []).some((rule) =>
+    (rule.ExposeHeaders || []).some((header) => {
+      const normalized = String(header || '').trim().toLowerCase()
+      return normalized === 'etag' || normalized === '*'
+    }),
+  )
+}
+
 if (minioEndpoint) {
   const bucket = process.env.MINIO_BUCKET
   if (!bucket) {
@@ -89,7 +102,9 @@ if (minioEndpoint) {
   }
 
   const smokeKey = `debug/storage-smoke-${Date.now()}.txt`
+  const multipartKey = `debug/storage-multipart-smoke-${Date.now()}.txt`
   const smokeBody = `storage-smoke:${new Date().toISOString()}`
+  let multipartUploadId = ''
 
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }))
@@ -133,6 +148,62 @@ if (minioEndpoint) {
     }
     console.log('Presigned GET OK')
 
+    const multipartCreate = await client.send(
+      new CreateMultipartUploadCommand({
+        Bucket: bucket,
+        Key: multipartKey,
+        ContentType: 'text/plain',
+      }),
+    )
+    if (!multipartCreate.UploadId) {
+      throw new Error('Multipart upload did not return an UploadId')
+    }
+    multipartUploadId = multipartCreate.UploadId
+
+    const multipartPartUrl = await getSignedUrl(
+      presignClient,
+      new UploadPartCommand({
+        Bucket: bucket,
+        Key: multipartKey,
+        UploadId: multipartUploadId,
+        PartNumber: 1,
+      }),
+      { expiresIn: Math.min(browserPresignTtlSec(), 900) },
+    )
+    const multipartPutRes = await fetch(multipartPartUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/plain' },
+      body: smokeBody,
+    })
+    if (!multipartPutRes.ok) {
+      throw new Error(`Multipart part upload failed with HTTP ${multipartPutRes.status}`)
+    }
+    if (!multipartPutRes.headers.get('etag')) {
+      throw new Error(
+        'Multipart part upload did not return an ETag header. Browser multipart uploads require ETag on each part response.',
+      )
+    }
+    console.log('Multipart presigned PUT returned ETag')
+
+    let bucketCors
+    try {
+      bucketCors = await client.send(new GetBucketCorsCommand({ Bucket: bucket }))
+    } catch (error) {
+      const code = error?.Code || error?.name
+      if (code === 'NoSuchCORSConfiguration') {
+        throw new Error(
+          'Bucket CORS is not configured. Add a CORS rule that allows browser upload origins and exposes ETag.',
+        )
+      }
+      throw error
+    }
+    if (!corsExposesEtag(bucketCors.CORSRules)) {
+      throw new Error(
+        'Bucket CORS does not expose ETag. Add ETag to ExposeHeaders so browser multipart uploads can complete.',
+      )
+    }
+    console.log('Bucket CORS exposes ETag for multipart uploads')
+
     const publicUrl = publicObjectUrl(bucket, smokeKey)
     if (publicUrl) {
       console.log('Unsigned public URL:', publicUrl)
@@ -160,6 +231,13 @@ if (minioEndpoint) {
     }
 
     await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: smokeKey }))
+    await client.send(
+      new AbortMultipartUploadCommand({
+        Bucket: bucket,
+        Key: multipartKey,
+        UploadId: multipartUploadId,
+      }),
+    )
     console.log('Smoke object cleanup OK')
   } catch (e) {
     const meta = e.$metadata
@@ -177,6 +255,19 @@ if (minioEndpoint) {
       await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: smokeKey }))
     } catch {
       /* best-effort cleanup */
+    }
+    if (multipartUploadId) {
+      try {
+        await client.send(
+          new AbortMultipartUploadCommand({
+            Bucket: bucket,
+            Key: multipartKey,
+            UploadId: multipartUploadId,
+          }),
+        )
+      } catch {
+        /* best-effort cleanup */
+      }
     }
     process.exit(1)
   }

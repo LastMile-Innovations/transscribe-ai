@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
+import { projectRowToVideoProject } from '@/lib/db/mappers'
 import {
   isMissingAwaitingTranscriptStatusError,
   missingAwaitingTranscriptStatusMessage,
@@ -40,6 +41,10 @@ export async function PATCH(
       mediaMetadata: StoredMediaMetadata | null
       status: ProjectStatus
       transcriptionProgress: number
+      processingError: string | null
+      prepareAttempts: number
+      prepareStartedAt: Date | null
+      prepareCompletedAt: Date | null
       duration: number
       title: string
       thumbnailUrl: string
@@ -54,6 +59,12 @@ export async function PATCH(
       ...(body.status !== undefined ? { status: body.status } : {}),
       ...(body.transcriptionProgress !== undefined
         ? { transcriptionProgress: body.transcriptionProgress }
+        : {}),
+      ...(body.processingError !== undefined ? { processingError: body.processingError } : {}),
+      ...(body.prepareAttempts !== undefined ? { prepareAttempts: body.prepareAttempts } : {}),
+      ...(body.prepareStartedAt !== undefined ? { prepareStartedAt: body.prepareStartedAt } : {}),
+      ...(body.prepareCompletedAt !== undefined
+        ? { prepareCompletedAt: body.prepareCompletedAt }
         : {}),
       ...(body.duration !== undefined ? { duration: body.duration } : {}),
       ...(body.title !== undefined ? { title: body.title } : {}),
@@ -78,7 +89,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    return NextResponse.json(row)
+    return NextResponse.json(projectRowToVideoProject(row))
   } catch (error) {
     console.error('Error patching project:', error)
     if (isMissingAwaitingTranscriptStatusError(error)) {

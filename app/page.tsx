@@ -79,43 +79,29 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useApp } from '@/lib/app-context'
 import type { VideoProject, ProjectStatus, WorkspaceProject, Folder } from '@/lib/types'
-import { errorMessageFromResponse, friendlyHttpMessage } from '@/lib/api-error-message'
+import { errorMessageFromResponse } from '@/lib/api-error-message'
 import {
   mediaSummaryLine,
   preferredDurationMs,
-  type StoredMediaMetadata,
 } from '@/lib/media-metadata'
+import { createConcurrencyQueue } from '@/lib/async-queue'
 import { buildClientMediaCapture } from '@/lib/client-media-capture'
 import { buildOriginalUploadKey } from '@/lib/media-keys'
+import { canRetryPrepare, isPrepareBusyStatus, projectHasPreparedEdit } from '@/lib/project-prepare'
 import { runTranscriptionFlow } from '@/lib/transcription-client'
 import {
   DEFAULT_TRANSCRIPTION_OPTIONS,
   DEFAULT_TRANSCRIPTION_PROMPT,
+  normalizeTranscriptionOptions,
+  type TranscriptionRequestOptions,
 } from '@/lib/transcription-options'
+import {
+  createUploadProjectStub,
+  startPlannedUpload,
+  type UploadHandle,
+  type UploadPlan,
+} from '@/lib/upload-client'
 import { cn } from '@/lib/utils'
-
-type UploadHandle = {
-  abort: () => void
-}
-
-type SingleUploadPlan = {
-  uploadType: 'single'
-  signedUrl: string
-  url: string | null
-  thresholdBytes: number
-}
-
-type MultipartUploadPlan = {
-  uploadType: 'multipart'
-  uploadId: string
-  partSize: number
-  maxParallelParts: number
-  parts: Array<{ partNumber: number; signedUrl: string }>
-  url: string | null
-  thresholdBytes: number
-}
-
-type UploadPlan = SingleUploadPlan | MultipartUploadPlan
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000)
@@ -180,6 +166,16 @@ function VaultUploadStats({ up }: { up: NonNullable<VideoProject['uploadProgress
 
 const STATUS_CONFIG: Record<ProjectStatus, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive'; icon: React.ReactNode }> = {
   ready: { label: 'Ready', variant: 'default', icon: <CheckCircle className="size-3" /> },
+  queued_prepare: {
+    label: 'Queued',
+    variant: 'outline',
+    icon: <Loader2 className="size-3 animate-spin" />,
+  },
+  preparing: {
+    label: 'Preparing',
+    variant: 'secondary',
+    icon: <Loader2 className="size-3 animate-spin" />,
+  },
   transcribing: { label: 'Transcribing', variant: 'secondary', icon: <Loader2 className="size-3 animate-spin" /> },
   awaiting_transcript: {
     label: 'Needs transcript',
@@ -197,6 +193,7 @@ function ProjectCard({
   onMoveToFolder,
   onRenameTitle,
   onStartTranscription,
+  onRetryPrepare,
   onCancelUpload,
   onDeleteMedia,
 }: {
@@ -206,6 +203,7 @@ function ProjectCard({
   onMoveToFolder?: (mediaId: string, folderId: string | null) => void
   onRenameTitle?: (mediaId: string, title: string) => Promise<void>
   onStartTranscription?: (mediaId: string) => void
+  onRetryPrepare?: (mediaId: string) => void
   onCancelUpload?: (mediaId: string) => void
   onDeleteMedia?: (mediaId: string) => Promise<void>
 }) {
@@ -213,11 +211,23 @@ function ProjectCard({
   const [titleValue, setTitleValue] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const projectErrorMessage = project.feedbackError ?? project.processingError ?? undefined
+  const projectErrorTitle =
+    project.status === 'awaiting_transcript'
+      ? 'Automatic transcription did not start'
+      : project.status === 'error' && !projectHasPreparedEdit(project)
+        ? 'Could not prepare editor video'
+        : project.status === 'error'
+          ? 'Something went wrong'
+          : 'Could not finish transcription'
   const { label, variant, icon } = STATUS_CONFIG[project.status]
   const isReady = project.status === 'ready'
   const canOpenInEditor =
     project.status === 'ready' || project.status === 'awaiting_transcript' || Boolean(project.fileUrl)
-  const isProcessing = project.status === 'uploading' || project.status === 'transcribing'
+  const isProcessing =
+    project.status === 'uploading' ||
+    project.status === 'transcribing' ||
+    isPrepareBusyStatus(project.status)
 
   const startRename = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -289,16 +299,21 @@ function ProjectCard({
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 px-3 py-2 text-center backdrop-blur-sm">
             <Loader2 className="size-8 shrink-0 animate-spin text-brand" />
             <span className="text-sm font-medium text-white">
-              {project.uploadProgress
-                ? 'Step 1 of 3: Uploading to vault…'
-                : project.mediaStep === 'prepare' ||
-                    (project.status === 'transcribing' && !project.mediaMetadata?.editKey)
-                  ? 'Step 2 of 3: Preparing editor MP4…'
-                  : project.mediaStep === 'transcribe'
-                    ? 'Step 3 of 3: Transcribing with AssemblyAI…'
-                    : 'Processing…'}
+              {project.status === 'uploading' && project.uploadQueueState === 'queued'
+                ? 'Waiting for an upload slot…'
+                : project.uploadProgress
+                  ? 'Step 1 of 3: Uploading to vault…'
+                  : project.status === 'uploading'
+                    ? 'Step 1 of 3: Reading local preview…'
+                  : project.status === 'queued_prepare'
+                    ? 'Step 2 of 3: Queued for editor prep…'
+                    : project.status === 'preparing' || project.mediaStep === 'prepare'
+                      ? 'Step 2 of 3: Preparing editor MP4…'
+                      : project.mediaStep === 'transcribe' || project.status === 'transcribing'
+                        ? 'Step 3 of 3: Transcribing with AssemblyAI…'
+                        : 'Processing…'}
             </span>
-            {project.uploadProgress ? (
+            {project.uploadProgress && project.uploadQueueState !== 'queued' ? (
               <VaultUploadStats up={project.uploadProgress} />
             ) : null}
             <div className="w-44 max-w-full">
@@ -306,7 +321,7 @@ function ProjectCard({
             </div>
             <span className="text-xs text-white/70 tabular-nums">{project.transcriptionProgress}%</span>
             
-            {project.status === 'uploading' && project.uploadProgress && onCancelUpload && (
+            {project.status === 'uploading' && onCancelUpload && (
               <Button
                 variant="outline"
                 size="sm"
@@ -398,7 +413,7 @@ function ProjectCard({
           <span className="truncate font-mono">{project.fileName}</span>
         </div>
 
-        {project.feedbackError ? (
+        {projectErrorMessage ? (
           <Alert
             variant={project.status === 'error' ? 'destructive' : 'default'}
             className={cn(
@@ -414,9 +429,9 @@ function ProjectCard({
               }
             />
             <AlertTitle className="text-xs font-medium">
-              {project.status === 'error' ? 'Something went wrong' : 'Could not finish transcription'}
+              {projectErrorTitle}
             </AlertTitle>
-            <AlertDescription className="text-xs leading-snug">{project.feedbackError}</AlertDescription>
+            <AlertDescription className="text-xs leading-snug">{projectErrorMessage}</AlertDescription>
           </Alert>
         ) : null}
 
@@ -447,6 +462,28 @@ function ProjectCard({
             </Button>
           </div>
         )}
+
+        {project.status === 'error' &&
+          !projectHasPreparedEdit(project) &&
+          (project.originalFileUrl || project.fileUrl) &&
+          onRetryPrepare && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              className="mt-2"
+            >
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="w-full gap-2 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-400"
+                onClick={() => onRetryPrepare(project.id)}
+              >
+                <Sparkles className="size-3.5" />
+                Retry Prepare
+              </Button>
+            </div>
+          )}
 
         {project.status === 'awaiting_transcript' && onStartTranscription && (
           <div
@@ -581,11 +618,97 @@ function EmptyState({ hasFilter }: { hasFilter: boolean }) {
 
 type BrowseFilter = { mode: 'all' } | { mode: 'folder'; folderId: string | null }
 
-function mapApiMedia(p: VideoProject & { uploadedAt: string | Date }): VideoProject {
+function mapApiMedia(
+  p: VideoProject & {
+    uploadedAt: string | Date
+    prepareStartedAt?: string | Date | null
+    prepareCompletedAt?: string | Date | null
+  },
+): VideoProject {
   return {
     ...p,
     uploadedAt: p.uploadedAt instanceof Date ? p.uploadedAt : new Date(p.uploadedAt as string),
+    prepareStartedAt:
+      p.prepareStartedAt == null
+        ? null
+        : p.prepareStartedAt instanceof Date
+          ? p.prepareStartedAt
+          : new Date(p.prepareStartedAt),
+    prepareCompletedAt:
+      p.prepareCompletedAt == null
+        ? null
+        : p.prepareCompletedAt instanceof Date
+          ? p.prepareCompletedAt
+          : new Date(p.prepareCompletedAt),
   }
+}
+
+async function extractLocalVideoPreview(
+  file: File,
+  id: string,
+): Promise<{
+  duration: number
+  thumbnailUrl: string
+  videoWidth: number
+  videoHeight: number
+}> {
+  const objectUrl = URL.createObjectURL(file)
+  const video = document.createElement('video')
+  video.preload = 'metadata'
+  video.src = objectUrl
+
+  return new Promise((resolve) => {
+    let duration = 0
+    let thumbnailUrl = `https://picsum.photos/seed/${id}/640/360`
+    let resolved = false
+    let safetyTimeout: number
+
+    const finish = (nextDuration: number, nextThumbnailUrl: string) => {
+      if (resolved) return
+      resolved = true
+      const videoWidth = video.videoWidth || 0
+      const videoHeight = video.videoHeight || 0
+      window.clearTimeout(safetyTimeout)
+      URL.revokeObjectURL(objectUrl)
+      video.src = ''
+      resolve({ duration: nextDuration, thumbnailUrl: nextThumbnailUrl, videoWidth, videoHeight })
+    }
+
+    safetyTimeout = window.setTimeout(() => finish(duration || 60000, thumbnailUrl), 10_000)
+
+    video.onloadedmetadata = () => {
+      const seconds = video.duration
+      if (Number.isFinite(seconds) && seconds > 0) {
+        duration = Math.round(seconds * 1000)
+      }
+    }
+
+    video.onloadeddata = () => {
+      const seconds = video.duration
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        finish(duration || 60000, thumbnailUrl)
+        return
+      }
+      const seekTime = Math.min(1, Math.max(0, seconds - 0.1))
+      video.currentTime = seekTime || 0
+    }
+
+    video.onseeked = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+        canvas.width = video.videoWidth / 4
+        canvas.height = video.videoHeight / 4
+        ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
+        thumbnailUrl = canvas.toDataURL('image/jpeg', 0.7)
+      } catch (error) {
+        console.error('Failed to generate thumbnail', error)
+      }
+      finish(duration, thumbnailUrl)
+    }
+
+    video.onerror = () => finish(60000, thumbnailUrl)
+  })
 }
 
 function folderPathOptions(folders: Folder[]): { id: string | null; label: string }[] {
@@ -603,6 +726,22 @@ function folderPathOptions(folders: Folder[]): { id: string | null; label: strin
     { id: null, label: 'Library root' },
     ...folders.map((f) => ({ id: f.id, label: pathFor(f) })),
   ]
+}
+
+function mergeLocalQueuedProjects(
+  previousMedia: VideoProject[] | undefined,
+  serverMedia: VideoProject[],
+  queuedUploads: Map<string, { persisted: boolean }>,
+): VideoProject[] {
+  if (!previousMedia || previousMedia.length === 0) return serverMedia
+
+  const serverIds = new Set(serverMedia.map((project) => project.id))
+  const localOnlyQueued = previousMedia.filter((project) => {
+    const queued = queuedUploads.get(project.id)
+    return queued && !queued.persisted && !serverIds.has(project.id)
+  })
+
+  return [...localOnlyQueued, ...serverMedia]
 }
 
 function FolderTreeNode({
@@ -785,20 +924,50 @@ function LibraryPageContent() {
       const res = await authedFetch(`/api/workspace-projects/${wpId}/tree`)
       if (!res.ok) return
       const data = await res.json()
-      setTree({
+      const nextMedia = (data.media as (VideoProject & { uploadedAt: string })[]).map(mapApiMedia)
+      setTree((prev) => ({
         workspace: {
           ...data.workspace,
           createdAt: new Date(data.workspace.createdAt),
         },
         folders: data.folders,
-        media: (data.media as (VideoProject & { uploadedAt: string })[]).map(mapApiMedia),
-      })
+        media: mergeLocalQueuedProjects(prev?.media, nextMedia, queuedUploadsRef.current),
+      }))
     } catch (e) {
       console.error(e)
     }
   }, [wpId, authedFetch])
 
   const transcriptionBusyRef = useRef<string | null>(null)
+  const currentTranscriptionOptions = useCallback(
+    (): TranscriptionRequestOptions =>
+      normalizeTranscriptionOptions({
+        speechModel: speechModel === 'fast' ? 'fast' : 'best',
+        speakerLabels,
+        languageDetection,
+        temperature: temperature[0],
+        keyterms,
+        prompt: customPrompt,
+        speakersExpected: speakersExpected ? parseInt(speakersExpected, 10) : undefined,
+        minSpeakers: minSpeakers ? parseInt(minSpeakers, 10) : undefined,
+        maxSpeakers: maxSpeakers ? parseInt(maxSpeakers, 10) : undefined,
+        knownSpeakers,
+        redactPii,
+      }),
+    [
+      customPrompt,
+      keyterms,
+      knownSpeakers,
+      languageDetection,
+      maxSpeakers,
+      minSpeakers,
+      redactPii,
+      speakerLabels,
+      speakersExpected,
+      speechModel,
+      temperature,
+    ],
+  )
 
   const startTranscriptionForProject = useCallback(
     async (projectId: string) => {
@@ -879,34 +1048,10 @@ function LibraryPageContent() {
           }
         })
 
-        const patchRes = await authedFetch(`/api/projects/${projectId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'transcribing', transcriptionProgress: 50 }),
-        })
-        if (!patchRes.ok) {
-          const msg = await errorMessageFromResponse(patchRes, 'Could not update project status.')
-          await revertToAwaiting(msg)
-          toast.error('Could not start transcription', { description: msg, duration: 9000 })
-          return
-        }
-
         const result = await runTranscriptionFlow({
           projectId,
           fetchImpl: authedFetch,
-          options: {
-            speechModel: speechModel === 'fast' ? 'fast' : 'best',
-            speakerLabels,
-            languageDetection,
-            temperature: temperature[0],
-            keyterms,
-            prompt: customPrompt,
-            speakersExpected: speakersExpected ? parseInt(speakersExpected, 10) : undefined,
-            minSpeakers: minSpeakers ? parseInt(minSpeakers, 10) : undefined,
-            maxSpeakers: maxSpeakers ? parseInt(maxSpeakers, 10) : undefined,
-            knownSpeakers,
-            redactPii,
-          },
+          options: currentTranscriptionOptions(),
           onProgress: (pct) => {
             dispatch({
               type: 'UPDATE_PROJECT',
@@ -989,17 +1134,7 @@ function LibraryPageContent() {
       tree,
       dispatch,
       refetchTree,
-      speechModel,
-      speakerLabels,
-      languageDetection,
-      temperature,
-      keyterms,
-      customPrompt,
-      speakersExpected,
-      minSpeakers,
-      maxSpeakers,
-      knownSpeakers,
-      redactPii,
+      currentTranscriptionOptions,
       authedFetch,
     ],
   )
@@ -1236,13 +1371,14 @@ function LibraryPageContent() {
         }
         const data = await res.json()
         if (cancelled) return
+        const nextMedia = (data.media as (VideoProject & { uploadedAt: string })[]).map(mapApiMedia)
         setTree({
           workspace: {
             ...data.workspace,
             createdAt: new Date(data.workspace.createdAt),
           },
           folders: data.folders,
-          media: (data.media as (VideoProject & { uploadedAt: string })[]).map(mapApiMedia),
+          media: mergeLocalQueuedProjects(undefined, nextMedia, queuedUploadsRef.current),
         })
       } catch (e) {
         console.error(e)
@@ -1260,7 +1396,13 @@ function LibraryPageContent() {
   // Background polling for stuck/ongoing jobs
   useEffect(() => {
     if (!tree || !wpId) return
-    const hasBusy = tree.media.some(m => m.status === 'uploading' || m.status === 'transcribing')
+    const hasBusy = tree.media.some(
+      (m) =>
+        m.status === 'uploading' ||
+        m.status === 'transcribing' ||
+        m.status === 'queued_prepare' ||
+        m.status === 'preparing',
+    )
     if (!hasBusy) return
 
     const interval = setInterval(() => {
@@ -1269,680 +1411,438 @@ function LibraryPageContent() {
     return () => clearInterval(interval)
   }, [tree, wpId, refetchTree])
 
+  const uploadQueueRef = useRef(createConcurrencyQueue(2))
   const activeUploadsRef = useRef<Map<string, UploadHandle>>(new Map())
+  const queuedUploadsRef = useRef<
+    Map<string, { cancel: () => void; persisted: boolean; cancelled: boolean }>
+  >(new Map())
 
-  const cancelUpload = useCallback(async (id: string) => {
-    const xhr = activeUploadsRef.current.get(id)
-    if (xhr) {
-      xhr.abort()
-      activeUploadsRef.current.delete(id)
-    }
-    
-    // Remove from local state
-    dispatch({ type: 'DELETE_PROJECT', id })
-    setTree((prev) => {
-      if (!prev) return prev
-      return { ...prev, media: prev.media.filter((m) => m.id !== id) }
-    })
-
-    // Try to delete from DB
-    try {
-      await authedFetch(`/api/projects/${id}`, { method: 'DELETE' })
-    } catch (e) {
-      console.error('Failed to delete cancelled project from db', e)
-    }
-  }, [dispatch, authedFetch])
-
-  const processSingleFile = useCallback(
-    async (file: File) => {
-      if (!wpId) return
-
-      const targetFolderId = browseFilter.mode === 'folder' ? browseFilter.folderId : null
-
-      const id = `proj-${crypto.randomUUID()}`
-      const originalKey = buildOriginalUploadKey(wpId, id, file.name)
-      const objectUrl = URL.createObjectURL(file)
-
-      // Start presign in parallel
-      const presignPromise = authedFetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workspaceProjectId: wpId,
-          filename: originalKey,
-          contentType: file.type,
-          fileSize: file.size,
-        }),
-      }).then(async (res) => {
-        if (!res.ok) {
-          const msg = await errorMessageFromResponse(res, 'Failed to get upload URL.')
-          throw new Error(msg)
-        }
-        return res.json() as Promise<UploadPlan>
-      })
-
-      // Initialize video element for metadata & thumbnail
-      const video = document.createElement('video')
-      video.preload = 'metadata'
-      video.src = objectUrl
-
-      // Capture duration, thumbnail, and intrinsic video dimensions (helps correlate with ffprobe / device)
-      const { duration, thumbnailUrl, videoWidth, videoHeight } = await new Promise<{
-        duration: number
-        thumbnailUrl: string
-        videoWidth: number
-        videoHeight: number
-      }>((resolve) => {
-        let duration = 0
-        let thumb = `https://picsum.photos/seed/${id}/640/360`
-        let resolved = false
-        let safetyTimeout: number
-
-        const finish = (d: number, t: string) => {
-          if (resolved) return
-          resolved = true
-          const vw = video.videoWidth || 0
-          const vh = video.videoHeight || 0
-          window.clearTimeout(safetyTimeout)
-          URL.revokeObjectURL(objectUrl)
-          video.src = ''
-          resolve({ duration: d, thumbnailUrl: t, videoWidth: vw, videoHeight: vh })
-        }
-
-        safetyTimeout = window.setTimeout(() => finish(duration || 60000, thumb), 10_000)
-
-        video.onloadedmetadata = () => {
-          const sec = video.duration
-          if (Number.isFinite(sec) && sec > 0) {
-            duration = Math.round(sec * 1000)
-          }
-        }
-
-        video.onloadeddata = () => {
-          const sec = video.duration
-          if (!Number.isFinite(sec) || sec <= 0) {
-            finish(duration || 60000, thumb)
-            return
-          }
-          const seekTime = Math.min(1, Math.max(0, sec - 0.1))
-          video.currentTime = seekTime || 0
-        }
-
-        video.onseeked = () => {
-          try {
-            const canvas = document.createElement('canvas')
-            const ctx = canvas.getContext('2d')
-            canvas.width = video.videoWidth / 4
-            canvas.height = video.videoHeight / 4
-            ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
-            thumb = canvas.toDataURL('image/jpeg', 0.7)
-          } catch (e) {
-            console.error('Failed to generate thumbnail', e)
-          }
-          finish(duration, thumb)
-        }
-
-        video.onerror = () => finish(60000, thumb)
-      })
-
-      let presignData: UploadPlan
-      try {
-        presignData = await presignPromise
-      } catch (e) {
-        console.error('Presign error:', e)
-        toast.error(
-          e instanceof Error ? e.message : 'Failed to generate secure upload link.',
-          { duration: 8000 },
-        )
-        return
-      }
-      const clientCapture = buildClientMediaCapture(
-        file,
-        videoWidth > 0 && videoHeight > 0
-          ? { videoWidth, videoHeight, durationMs: duration }
-          : undefined,
-      )
-
-      const updateUploadProgress = (loaded: number, total: number, uploadStartedAt: number) => {
-        if (!Number.isFinite(total) || total <= 0) return
-        const elapsedSec = Math.max((performance.now() - uploadStartedAt) / 1000, 0.05)
-        const speedBps = loaded / elapsedSec
-        const percent = Math.round((loaded / total) * 40) + 10 // 10% to 50%
-        const uploadProgress = {
-          loaded,
-          total,
-          speedBps,
-        }
-        dispatch({
-          type: 'UPDATE_PROJECT',
-          id,
-          updates: { transcriptionProgress: percent, uploadProgress, mediaStep: 'upload' },
-        })
-        setTree((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            media: prev.media.map((m) =>
-              m.id === id
-                ? { ...m, transcriptionProgress: percent, uploadProgress, mediaStep: 'upload' }
-                : m,
-            ),
-          }
-        })
-      }
-
-      const newProject: VideoProject = {
-        id,
-        title: file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' '),
-        fileName: file.name,
-        duration,
-        uploadedAt: new Date(),
-        status: 'uploading',
-        thumbnailUrl,
-        fileUrl: null,
-        transcriptionProgress: 0,
-        workspaceProjectId: wpId,
-        folderId: targetFolderId,
-      }
-
-      dispatch({ type: 'ADD_PROJECT', project: newProject })
+  const addProjectLocally = useCallback(
+    (project: VideoProject) => {
+      dispatch({ type: 'ADD_PROJECT', project })
       setTree((prev) => {
         if (!prev) return prev
-        return { ...prev, media: [newProject, ...prev.media] }
+        return { ...prev, media: [project, ...prev.media] }
       })
+    },
+    [dispatch],
+  )
+
+  const updateProjectLocally = useCallback(
+    (id: string, updates: Partial<VideoProject>) => {
+      dispatch({ type: 'UPDATE_PROJECT', id, updates })
+      setTree((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          media: prev.media.map((media) => (media.id === id ? { ...media, ...updates } : media)),
+        }
+      })
+    },
+    [dispatch],
+  )
+
+  const removeProjectLocally = useCallback(
+    (id: string) => {
+      dispatch({ type: 'DELETE_PROJECT', id })
+      setTree((prev) => {
+        if (!prev) return prev
+        return { ...prev, media: prev.media.filter((media) => media.id !== id) }
+      })
+    },
+    [dispatch],
+  )
+
+  const cancelUpload = useCallback(async (id: string) => {
+    const queued = queuedUploadsRef.current.get(id)
+    if (queued) {
+      queued.cancelled = true
+      queued.cancel()
+      queuedUploadsRef.current.delete(id)
+    }
+
+    const handle = activeUploadsRef.current.get(id)
+    if (handle) {
+      handle.abort()
+      activeUploadsRef.current.delete(id)
+    }
+
+    removeProjectLocally(id)
+
+    if (!queued?.persisted) return
+
+    try {
+      await authedFetch(`/api/projects/${id}`, { method: 'DELETE' })
+    } catch (error) {
+      console.error('Failed to delete cancelled project from db', error)
+    }
+  }, [authedFetch, removeProjectLocally])
+
+  const runQueuedUpload = useCallback(
+    async (input: {
+      file: File
+      project: VideoProject
+      originalKey: string
+      clientCapture: ReturnType<typeof buildClientMediaCapture>
+      transcriptionOptions: TranscriptionRequestOptions | null
+    }) => {
+      if (!wpId) return
+
+      const queueEntry = queuedUploadsRef.current.get(input.project.id)
+      let originalPlaybackUrl: string | null = null
 
       try {
+        if (!queueEntry || queueEntry.cancelled) {
+          throw new Error('Upload cancelled.')
+        }
+
+        const presignRes = await authedFetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspaceProjectId: wpId,
+            filename: input.originalKey,
+            contentType: input.file.type,
+            fileSize: input.file.size,
+          }),
+        })
+        if (!presignRes.ok) {
+          throw new Error(await errorMessageFromResponse(presignRes, 'Failed to get upload URL.'))
+        }
+        const presignData = (await presignRes.json()) as UploadPlan
+        if (queueEntry?.cancelled) {
+          throw new Error('Upload cancelled.')
+        }
+
         const insertRes = await authedFetch('/api/projects/insert', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newProject),
+          body: JSON.stringify(input.project),
         })
         if (!insertRes.ok) {
-          const msg = await errorMessageFromResponse(insertRes, 'Failed to save project to the database.')
-          throw new Error(msg)
+          throw new Error(
+            await errorMessageFromResponse(insertRes, 'Failed to save project to the database.'),
+          )
         }
-      } catch (err) {
-        console.error('DB Persistence Error:', err)
-        dispatch({ type: 'DELETE_PROJECT', id })
-        setTree((prev) => {
-          if (!prev) return prev
-          return { ...prev, media: prev.media.filter((m) => m.id !== id) }
-        })
-        toast.error(
-          err instanceof Error ? err.message : 'Failed to create project.',
-          { duration: 8000 },
-        )
-        return
-      }
+        if (queueEntry) {
+          queueEntry.persisted = true
+        }
+        if (queueEntry?.cancelled) {
+          throw new Error('Upload cancelled.')
+        }
 
-      try {
-        dispatch({
-          type: 'UPDATE_PROJECT',
-          id,
-          updates: { status: 'uploading', transcriptionProgress: 10, mediaStep: 'upload' },
-        })
-        setTree((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            media: prev.media.map((m) =>
-              m.id === id
-                ? { ...m, status: 'uploading', transcriptionProgress: 10, mediaStep: 'upload' }
-                : m,
-            ),
-          }
+        updateProjectLocally(input.project.id, {
+          status: 'uploading',
+          transcriptionProgress: 10,
+          mediaStep: 'upload',
+          uploadQueueState: 'running',
+          uploadProgress: {
+            loaded: 0,
+            total: input.file.size,
+            speedBps: 0,
+          },
+          feedbackError: undefined,
+          processingError: null,
         })
 
-        await authedFetch(`/api/projects/${id}`, {
+        await authedFetch(`/api/projects/${input.project.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'uploading', transcriptionProgress: 10 }),
         })
 
         const uploadStartedAt = performance.now()
-
-        if (presignData.uploadType === 'single') {
-          await new Promise<void>((resolve, reject) => {
-            const xhr = new XMLHttpRequest()
-            activeUploadsRef.current.set(id, xhr)
-
-            xhr.open('PUT', presignData.signedUrl)
-            xhr.setRequestHeader('Content-Type', file.type)
-
-            xhr.upload.onprogress = (e) => {
-              if (!e.lengthComputable || e.total <= 0) return
-              updateUploadProgress(e.loaded, e.total, uploadStartedAt)
-            }
-
-            xhr.onload = () => {
-              activeUploadsRef.current.delete(id)
-              if (xhr.status >= 200 && xhr.status < 300) {
-                resolve()
-              } else {
-                reject(
-                  new Error(
-                    xhr.status
-                      ? `Upload to storage failed (HTTP ${xhr.status}). Check file size and try again.`
-                      : 'Upload to storage was rejected. Try again.',
-                  ),
-                )
-              }
-            }
-
-            xhr.onerror = () => {
-              activeUploadsRef.current.delete(id)
-              reject(new Error('Network error during upload. Check your connection and try again.'))
-            }
-
-            xhr.onabort = () => {
-              activeUploadsRef.current.delete(id)
-              reject(new Error('Upload cancelled.'))
-            }
-
-            xhr.send(file)
-          })
-        } else {
-          let cancelled = false
-          let completed = false
-          const activePartXhrs = new Map<number, XMLHttpRequest>()
-          const partLoadedBytes = new Map<number, number>()
-          const uploadedParts = new Map<number, string>()
-
-          const syncMultipartProgress = () => {
-            const loaded = Array.from(partLoadedBytes.values()).reduce((sum, value) => sum + value, 0)
-            updateUploadProgress(Math.min(loaded, file.size), file.size, uploadStartedAt)
-          }
-
-          const abortActivePartUploads = () => {
-            cancelled = true
-            for (const xhr of activePartXhrs.values()) {
-              xhr.abort()
-            }
-            activePartXhrs.clear()
-          }
-
-          activeUploadsRef.current.set(id, {
-            abort: abortActivePartUploads,
-          })
-
-          try {
-            const uploadPart = (part: { partNumber: number; signedUrl: string }) =>
-              new Promise<string>((resolve, reject) => {
-                const start = (part.partNumber - 1) * presignData.partSize
-                const end = Math.min(start + presignData.partSize, file.size)
-                const chunk = file.slice(start, end)
-                const chunkSize = end - start
-
-                const xhr = new XMLHttpRequest()
-                activePartXhrs.set(part.partNumber, xhr)
-                xhr.open('PUT', part.signedUrl)
-                xhr.setRequestHeader('Content-Type', file.type)
-
-                xhr.upload.onprogress = (e) => {
-                  const loaded = e.lengthComputable ? Math.min(e.loaded, chunkSize) : 0
-                  partLoadedBytes.set(part.partNumber, loaded)
-                  syncMultipartProgress()
-                }
-
-                xhr.onload = () => {
-                  activePartXhrs.delete(part.partNumber)
-                  if (xhr.status < 200 || xhr.status >= 300) {
-                    reject(
-                      new Error(
-                        xhr.status
-                          ? `Multipart upload failed on part ${part.partNumber} (HTTP ${xhr.status}).`
-                          : `Multipart upload was rejected on part ${part.partNumber}.`,
-                      ),
-                    )
-                    return
-                  }
-
-                  const etag = xhr.getResponseHeader('ETag')
-                  if (!etag) {
-                    reject(new Error(`Storage did not return an ETag for part ${part.partNumber}.`))
-                    return
-                  }
-
-                  partLoadedBytes.set(part.partNumber, chunkSize)
-                  syncMultipartProgress()
-                  resolve(etag)
-                }
-
-                xhr.onerror = () => {
-                  activePartXhrs.delete(part.partNumber)
-                  reject(new Error(`Network error during multipart upload (part ${part.partNumber}).`))
-                }
-                xhr.onabort = () => {
-                  activePartXhrs.delete(part.partNumber)
-                  reject(new Error('Upload cancelled.'))
-                }
-                xhr.send(chunk)
-              })
-
-            const maxParallelParts = Math.max(
-              1,
-              Math.min(presignData.maxParallelParts, presignData.parts.length),
-            )
-            let nextPartIndex = 0
-
-            const runMultipartWorker = async () => {
-              while (true) {
-                if (cancelled) throw new Error('Upload cancelled.')
-                const part = presignData.parts[nextPartIndex++]
-                if (!part) return
-                const etag = await uploadPart(part)
-                uploadedParts.set(part.partNumber, etag)
-              }
-            }
-
-            await Promise.all(
-              Array.from({ length: maxParallelParts }, () => runMultipartWorker()),
-            )
-            if (cancelled) throw new Error('Upload cancelled.')
-
-            const completedParts = presignData.parts
-              .map((part) => ({
-                ETag: uploadedParts.get(part.partNumber) ?? '',
-                PartNumber: part.partNumber,
-              }))
-              .filter((part) => part.ETag)
-            if (completedParts.length !== presignData.parts.length) {
-              throw new Error('Multipart upload finished with missing parts.')
-            }
-
+        const startedUpload = startPlannedUpload({
+          file: input.file,
+          plan: presignData,
+          onProgress: (loaded, total) => {
+            if (!Number.isFinite(total) || total <= 0) return
+            const elapsedSec = Math.max((performance.now() - uploadStartedAt) / 1000, 0.05)
+            const speedBps = loaded / elapsedSec
+            const transcriptionProgress = Math.round((loaded / total) * 40) + 10
+            updateProjectLocally(input.project.id, {
+              transcriptionProgress,
+              mediaStep: 'upload',
+              uploadProgress: { loaded, total, speedBps },
+              uploadQueueState: 'running',
+            })
+          },
+          onMultipartComplete: async (parts, uploadId) => {
             const completeRes = await authedFetch('/api/upload/multipart', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 action: 'complete',
                 workspaceProjectId: wpId,
-                filename: originalKey,
-                uploadId: presignData.uploadId,
-                parts: completedParts,
+                filename: input.originalKey,
+                uploadId,
+                parts,
               }),
             })
             if (!completeRes.ok) {
-              const msg = await errorMessageFromResponse(
-                completeRes,
-                'Could not finalize the multipart upload.',
+              throw new Error(
+                await errorMessageFromResponse(
+                  completeRes,
+                  'Could not finalize the multipart upload.',
+                ),
               )
-              throw new Error(msg)
             }
-
-            completed = true
-          } catch (error) {
-            if (!cancelled) {
-              abortActivePartUploads()
-            }
-            if (!completed) {
-              await authedFetch('/api/upload/multipart', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'abort',
-                  workspaceProjectId: wpId,
-                  filename: originalKey,
-                  uploadId: presignData.uploadId,
-                }),
-              }).catch(() => {})
-            }
-            throw error
-          } finally {
-            activeUploadsRef.current.delete(id)
-          }
-        }
-
-        const originalPlaybackUrl = presignData.url
-        dispatch({
-          type: 'UPDATE_PROJECT',
-          id,
-          updates: {
-            status: 'transcribing',
-            fileUrl: originalPlaybackUrl,
-            originalFileUrl: originalPlaybackUrl,
-            transcriptionProgress: 48,
-            uploadProgress: undefined,
-            mediaStep: 'prepare',
-            feedbackError: undefined,
+          },
+          onMultipartAbort: async (uploadId) => {
+            await authedFetch('/api/upload/multipart', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'abort',
+                workspaceProjectId: wpId,
+                filename: input.originalKey,
+                uploadId,
+              }),
+            })
           },
         })
-        setTree((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            media: prev.media.map((m) =>
-              m.id === id
-                ? {
-                    ...m,
-                    status: 'transcribing',
-                    fileUrl: originalPlaybackUrl,
-                    originalFileUrl: originalPlaybackUrl,
-                    transcriptionProgress: 48,
-                    uploadProgress: undefined,
-                    mediaStep: 'prepare',
-                    feedbackError: undefined,
-                  }
-                : m,
-            ),
-          }
+
+        activeUploadsRef.current.set(input.project.id, startedUpload)
+        await startedUpload.done
+        activeUploadsRef.current.delete(input.project.id)
+
+        originalPlaybackUrl = presignData.url
+        updateProjectLocally(input.project.id, {
+          status: 'queued_prepare',
+          fileUrl: originalPlaybackUrl,
+          originalFileUrl: originalPlaybackUrl,
+          transcriptionProgress: 55,
+          uploadProgress: undefined,
+          uploadQueueState: undefined,
+          mediaStep: 'prepare',
+          feedbackError: undefined,
+          processingError: null,
         })
 
-        await authedFetch(`/api/projects/${id}`, {
+        await authedFetch(`/api/projects/${input.project.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            status: 'transcribing',
+            status: 'queued_prepare',
             fileUrl: originalPlaybackUrl,
             originalFileUrl: originalPlaybackUrl,
-            transcriptionProgress: 48,
+            transcriptionProgress: 55,
           }),
         }).catch((error) => {
-          console.error('Failed to persist prepare-in-background state:', error)
+          console.error('Failed to persist queued prepare state:', error)
         })
 
-        void (async () => {
-          try {
-            const prepRes = await authedFetch(`/api/projects/${id}/prepare-edit-asset`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ originalKey, clientCapture }),
-            })
-            const prepBody = (await prepRes.json().catch(() => null)) as {
-              error?: string
-              fileUrl?: string
-              originalFileUrl?: string
-              sha256Hash?: string
-              duration?: number
-              mediaMetadata?: StoredMediaMetadata
-              playbackUrlRefreshedAt?: number | null
-              playbackUrlExpiresAt?: number | null
-            } | null
-            if (!prepRes.ok || !prepBody?.fileUrl) {
-              const fromApi =
-                prepBody && typeof prepBody.error === 'string' && prepBody.error.trim()
-                  ? prepBody.error.trim()
-                  : null
-              throw new Error(
-                fromApi ||
-                  friendlyHttpMessage(
-                    prepRes.status,
-                    'Could not prepare the editor video (transcode or storage).',
-                  ),
-              )
-            }
-
-            const {
-              fileUrl: editFileUrl,
-              originalFileUrl,
-              sha256Hash,
-              duration: probeDuration,
-              mediaMetadata,
-              playbackUrlRefreshedAt,
-              playbackUrlExpiresAt,
-            } = prepBody as {
-              fileUrl: string
-              originalFileUrl: string
-              sha256Hash: string
-              duration: number
-              mediaMetadata: StoredMediaMetadata
-              playbackUrlRefreshedAt?: number | null
-              playbackUrlExpiresAt?: number | null
-            }
-
-            dispatch({
-              type: 'UPDATE_PROJECT',
-              id,
-              updates: {
-                status: 'awaiting_transcript',
-                fileUrl: editFileUrl,
-                originalFileUrl,
-                sha256Hash,
-                duration: probeDuration,
-                mediaMetadata,
-                playbackUrlRefreshedAt,
-                playbackUrlExpiresAt,
-                transcriptionProgress: 0,
-                uploadProgress: undefined,
-                mediaStep: undefined,
-                feedbackError: undefined,
-              },
-            })
-            setTree((prev) => {
-              if (!prev) return prev
-              return {
-                ...prev,
-                media: prev.media.map((m) =>
-                  m.id === id
-                    ? {
-                        ...m,
-                        status: 'awaiting_transcript',
-                        fileUrl: editFileUrl,
-                        originalFileUrl,
-                        sha256Hash,
-                        duration: probeDuration,
-                        mediaMetadata,
-                        playbackUrlRefreshedAt,
-                        playbackUrlExpiresAt,
-                        transcriptionProgress: 0,
-                        uploadProgress: undefined,
-                        mediaStep: undefined,
-                        feedbackError: undefined,
-                      }
-                    : m,
-                ),
-              }
-            })
-
-            await refetchTree()
-
-            if (autoTranscribe) {
-              toast.success('Editor MP4 is ready. Starting transcription automatically...')
-              void startTranscriptionForProject(id)
-            } else {
-              toast.success(
-                'Editor MP4 ready. Adjust Transcription Settings if needed, then tap Transcribe on this file.',
-              )
-            }
-          } catch (prepError) {
-            console.error('Prepare-edit-asset error:', prepError)
-            const message =
-              prepError instanceof Error
-                ? prepError.message
-                : 'Could not prepare the editor video (transcode or storage).'
-            dispatch({
-              type: 'UPDATE_PROJECT',
-              id,
-              updates: {
-                status: 'error',
-                fileUrl: originalPlaybackUrl,
-                originalFileUrl: originalPlaybackUrl,
-                mediaStep: undefined,
-                feedbackError: `${message} The original upload is still available for preview.`,
-              },
-            })
-            setTree((prev) => {
-              if (!prev) return prev
-              return {
-                ...prev,
-                media: prev.media.map((m) =>
-                  m.id === id
-                    ? {
-                        ...m,
-                        status: 'error',
-                        fileUrl: originalPlaybackUrl,
-                        originalFileUrl: originalPlaybackUrl,
-                        mediaStep: undefined,
-                        feedbackError: `${message} The original upload is still available for preview.`,
-                      }
-                    : m,
-                ),
-              }
-            })
-            await authedFetch(`/api/projects/${id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                status: 'error',
-                fileUrl: originalPlaybackUrl,
-                originalFileUrl: originalPlaybackUrl,
-              }),
-            }).catch(() => {})
-            await refetchTree()
-            toast.error('Upload finished, but background preparation failed', {
-              description: message,
-              duration: 10_000,
-            })
-          }
-        })()
+        const prepareRes = await authedFetch(`/api/projects/${input.project.id}/prepare`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            originalKey: input.originalKey,
+            clientCapture: input.clientCapture,
+            ...(input.transcriptionOptions
+              ? { transcriptionOptions: input.transcriptionOptions }
+              : {}),
+          }),
+        })
+        if (!prepareRes.ok) {
+          throw new Error(
+            await errorMessageFromResponse(
+              prepareRes,
+              'Could not queue the editor video preparation.',
+            ),
+          )
+        }
 
         toast.success(
           originalPlaybackUrl
             ? 'Upload complete. Preview is ready while the editor MP4 prepares in the background.'
             : 'Upload complete. Preparing the editor MP4 in the background.',
         )
+        void refetchTree()
+      } catch (error) {
+        console.error('Upload error:', error)
+        const message = error instanceof Error ? error.message : 'Upload failed. Please try again.'
 
-      } catch (err) {
-        console.error('Upload error:', err)
-        if (err instanceof Error && err.message === 'Upload cancelled.') {
-          // Handled by cancelUpload
+        if (message === 'Upload cancelled.' || message === 'Queue entry cancelled.') {
+          if (queueEntry?.persisted) {
+            await authedFetch(`/api/projects/${input.project.id}`, { method: 'DELETE' }).catch(() => undefined)
+          }
           return
         }
-        const message =
-          err instanceof Error
-            ? err.message
-            : 'Upload failed. Please check your connection and try again.'
-        dispatch({
-          type: 'UPDATE_PROJECT',
-          id,
-          updates: { status: 'error', mediaStep: undefined, feedbackError: message },
+
+        if (!queueEntry?.persisted) {
+          removeProjectLocally(input.project.id)
+          toast.error(message, { duration: 8000 })
+          return
+        }
+
+        updateProjectLocally(input.project.id, {
+          status: 'error',
+          fileUrl: originalPlaybackUrl,
+          originalFileUrl: originalPlaybackUrl,
+          uploadProgress: undefined,
+          uploadQueueState: undefined,
+          mediaStep: undefined,
+          feedbackError:
+            originalPlaybackUrl && !projectHasPreparedEdit(input.project)
+              ? `${message} The original upload is still available for preview.`
+              : message,
+          processingError: message,
         })
-        setTree((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            media: prev.media.map((m) =>
-              m.id === id
-                ? { ...m, status: 'error', mediaStep: undefined, feedbackError: message }
-                : m,
-            ),
-          }
-        })
-        await authedFetch(`/api/projects/${id}`, {
+        await authedFetch(`/api/projects/${input.project.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'error' }),
-        }).catch(() => {})
+          body: JSON.stringify({
+            status: 'error',
+            fileUrl: originalPlaybackUrl,
+            originalFileUrl: originalPlaybackUrl,
+            processingError: message,
+          }),
+        }).catch(() => undefined)
         toast.error('Upload failed', { description: message, duration: 10_000 })
+      } finally {
+        activeUploadsRef.current.delete(input.project.id)
+        queuedUploadsRef.current.delete(input.project.id)
       }
     },
+    [authedFetch, refetchTree, removeProjectLocally, updateProjectLocally, wpId],
+  )
+
+  const queueSingleFile = useCallback(
+    async (file: File, pendingAutoTranscriptionOptions: TranscriptionRequestOptions | null) => {
+      if (!wpId) return
+
+      const targetFolderId = browseFilter.mode === 'folder' ? browseFilter.folderId : null
+      const id = `proj-${crypto.randomUUID()}`
+      const originalKey = buildOriginalUploadKey(wpId, id, file.name)
+
+      const placeholderProject = createUploadProjectStub({
+        id,
+        workspaceProjectId: wpId,
+        folderId: targetFolderId,
+        file,
+        duration: 60_000,
+        thumbnailUrl: `https://picsum.photos/seed/${id}/640/360`,
+      })
+      addProjectLocally(placeholderProject)
+
+      const queuedTask = uploadQueueRef.current.enqueue(async () => {
+        updateProjectLocally(id, {
+          uploadQueueState: 'running',
+          mediaStep: 'upload',
+          feedbackError: undefined,
+          processingError: null,
+        })
+
+        const preview = await extractLocalVideoPreview(file, id)
+        const queueEntry = queuedUploadsRef.current.get(id)
+        if (!queueEntry || queueEntry.cancelled) {
+          throw new Error('Upload cancelled.')
+        }
+
+        const clientCapture = buildClientMediaCapture(
+          file,
+          preview.videoWidth > 0 && preview.videoHeight > 0
+            ? {
+                videoWidth: preview.videoWidth,
+                videoHeight: preview.videoHeight,
+                durationMs: preview.duration,
+              }
+            : undefined,
+        )
+
+        const project = {
+          ...placeholderProject,
+          duration: preview.duration,
+          thumbnailUrl: preview.thumbnailUrl,
+          uploadQueueState: 'running' as const,
+          mediaStep: 'upload' as const,
+        }
+
+        updateProjectLocally(id, {
+          duration: preview.duration,
+          thumbnailUrl: preview.thumbnailUrl,
+          uploadQueueState: 'running',
+          mediaStep: 'upload',
+        })
+
+        await runQueuedUpload({
+          file,
+          project,
+          originalKey,
+          clientCapture,
+          transcriptionOptions: pendingAutoTranscriptionOptions,
+        })
+      })
+      queuedUploadsRef.current.set(id, {
+        cancel: queuedTask.cancel,
+        persisted: false,
+        cancelled: false,
+      })
+
+      void queuedTask.promise.catch((error) => {
+        if (
+          error instanceof Error &&
+          (error.message === 'Queue entry cancelled.' || error.message === 'Upload cancelled.')
+        ) {
+          return
+        }
+        console.error('Queued upload task failed unexpectedly:', error)
+      })
+    },
+    [addProjectLocally, browseFilter, runQueuedUpload, updateProjectLocally, wpId],
+  )
+
+  const retryPrepare = useCallback(
+    async (projectId: string) => {
+      const project =
+        tree?.media.find((media) => media.id === projectId) ??
+        state.projects.find((media) => media.id === projectId)
+      if (!project) return
+      if (!canRetryPrepare(project)) {
+        toast.error('That file is not waiting for a preparation retry.')
+        return
+      }
+
+      const originalKey = buildOriginalUploadKey(project.workspaceProjectId, project.id, project.fileName)
+      updateProjectLocally(projectId, {
+        status: 'queued_prepare',
+        transcriptionProgress: 55,
+        mediaStep: 'prepare',
+        feedbackError: undefined,
+        processingError: null,
+      })
+
+      const res = await authedFetch(`/api/projects/${projectId}/prepare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          originalKey,
+          ...(autoTranscribe ? { transcriptionOptions: currentTranscriptionOptions() } : {}),
+        }),
+      })
+      if (!res.ok) {
+        updateProjectLocally(projectId, {
+          status: 'error',
+          mediaStep: undefined,
+        })
+        toast.error(
+          await errorMessageFromResponse(res, 'Could not queue the preparation retry.'),
+          { duration: 8000 },
+        )
+        return
+      }
+
+      toast.success('Preparation retry queued.')
+      void refetchTree()
+    },
     [
-      dispatch,
-      wpId,
-      browseFilter,
-      refetchTree,
-      autoTranscribe,
-      startTranscriptionForProject,
       authedFetch,
+      autoTranscribe,
+      currentTranscriptionOptions,
+      refetchTree,
+      state.projects,
+      tree,
+      updateProjectLocally,
     ],
   )
 
@@ -1972,12 +1872,13 @@ function LibraryPageContent() {
         toast.info('Preparing upload...')
       }
 
-      // Process files concurrently
-      validFiles.forEach(file => {
-        void processSingleFile(file)
+      const pendingAutoTranscriptionOptions = autoTranscribe ? currentTranscriptionOptions() : null
+
+      validFiles.forEach((file) => {
+        void queueSingleFile(file, pendingAutoTranscriptionOptions)
       })
     },
-    [wpId, myMembership?.role, processSingleFile],
+    [autoTranscribe, currentTranscriptionOptions, myMembership?.role, queueSingleFile, wpId],
   )
 
   const onDrop = useCallback(
@@ -2707,6 +2608,8 @@ function LibraryPageContent() {
                 <SelectItem value="all">All statuses</SelectItem>
                 <SelectItem value="ready">Ready</SelectItem>
                 <SelectItem value="awaiting_transcript">Needs transcript</SelectItem>
+                <SelectItem value="preparing">Preparing</SelectItem>
+                <SelectItem value="queued_prepare">Queued for prep</SelectItem>
                 <SelectItem value="transcribing">Transcribing</SelectItem>
                 <SelectItem value="uploading">Uploading</SelectItem>
                 <SelectItem value="error">Error</SelectItem>
@@ -2732,6 +2635,7 @@ function LibraryPageContent() {
                 onMoveToFolder={viewerLocked ? undefined : moveMediaToFolder}
                 onRenameTitle={viewerLocked ? undefined : renameMediaProject}
                 onStartTranscription={viewerLocked ? undefined : startTranscriptionForProject}
+                onRetryPrepare={viewerLocked ? undefined : retryPrepare}
                 onCancelUpload={viewerLocked ? undefined : cancelUpload}
                 onDeleteMedia={viewerLocked ? undefined : deleteMediaProject}
               />

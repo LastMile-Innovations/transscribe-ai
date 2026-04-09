@@ -33,6 +33,10 @@ export interface VideoProject {
   /** ffprobe payloads + derived summary (original vault file + edit MP4). */
   mediaMetadata?: StoredMediaMetadata | null
   transcriptionProgress: number // 0–100
+  processingError?: string | null
+  prepareAttempts?: number
+  prepareStartedAt?: Date | null
+  prepareCompletedAt?: Date | null
   /** Client-only pipeline step for clearer UX; not persisted. */
   mediaStep?: 'upload' | 'prepare' | 'transcribe'
   /** Client-only last error message for inline/card feedback; not persisted. */
@@ -43,6 +47,8 @@ export interface VideoProject {
     total: number
     speedBps: number
   }
+  /** Client-only bounded file queue state; not persisted. */
+  uploadQueueState?: 'queued' | 'running'
   /** Client-only timestamp (ms since epoch) for the last minted playback URL. */
   playbackUrlRefreshedAt?: number | null
   /** Client-only timestamp (ms since epoch) when the current playback URL is expected to expire. */

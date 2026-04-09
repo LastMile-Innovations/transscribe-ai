@@ -317,7 +317,11 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
   )
 
   const startNewTranscription = useCallback(async () => {
-    if (!mediaId || (project?.status !== 'ready' && project?.status !== 'awaiting_transcript')) {
+    const canRetryTranscription = project?.status === 'error' && Boolean(project.mediaMetadata?.editKey)
+    if (
+      !mediaId ||
+      (!canRetryTranscription && project?.status !== 'ready' && project?.status !== 'awaiting_transcript')
+    ) {
       toast.error('Editor MP4 is not ready for transcription yet.')
       return
     }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { projectRowToVideoProject } from '@/lib/db/mappers'
 import { projects } from '@/lib/db/schema'
 import type { StoredMediaMetadata } from '@/lib/media-metadata'
 import { insertProjectBodySchema } from '@/lib/validation/projects'
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
       })
       .returning()
 
-    return NextResponse.json(newProject)
+    return NextResponse.json(projectRowToVideoProject(newProject))
   } catch (error) {
     console.error('Error inserting project:', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

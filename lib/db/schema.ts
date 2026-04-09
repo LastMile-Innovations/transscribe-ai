@@ -1,6 +1,8 @@
 import { relations, sql } from 'drizzle-orm'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import type { ClientMediaCapture } from '@/lib/client-media-capture'
 import type { StoredMediaMetadata } from '@/lib/media-metadata'
+import type { TranscriptionRequestOptions } from '@/lib/transcription-options'
 import {
   index,
   integer,
@@ -25,6 +27,8 @@ export type StoredTranscriptWord = {
 
 export const projectStatusEnum = pgEnum('project_status', [
   'uploading',
+  'queued_prepare',
+  'preparing',
   'transcribing',
   'awaiting_transcript',
   'ready',
@@ -99,6 +103,13 @@ export const projects = pgTable(
     /** Browser-accessible URL of byte-identical original upload (evidence vault). */
     originalFileUrl: text('original_file_url'),
     transcriptionProgress: integer('transcription_progress').notNull().default(0),
+    processingError: text('processing_error'),
+    prepareAttempts: integer('prepare_attempts').notNull().default(0),
+    prepareStartedAt: timestamp('prepare_started_at'),
+    prepareCompletedAt: timestamp('prepare_completed_at'),
+    pendingClientCapture: jsonb('pending_client_capture').$type<ClientMediaCapture | null>(),
+    pendingAutoTranscriptionOptions: jsonb('pending_auto_transcription_options')
+      .$type<TranscriptionRequestOptions | null>(),
     workspaceProjectId: text('workspace_project_id')
       .notNull()
       .references(() => workspaceProjects.id, { onDelete: 'cascade' }),
@@ -112,6 +123,11 @@ export const projects = pgTable(
   (t) => ({
     workspaceProjectUploadedAtIdx: index('projects_workspace_project_uploaded_at_idx').on(
       t.workspaceProjectId,
+      t.uploadedAt,
+    ),
+    statusPrepareStartedIdx: index('projects_status_prepare_started_idx').on(
+      t.status,
+      t.prepareStartedAt,
       t.uploadedAt,
     ),
   }),

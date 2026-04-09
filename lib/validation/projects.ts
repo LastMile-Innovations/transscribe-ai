@@ -22,6 +22,10 @@ export const insertProjectBodySchema = z.object({
   sha256Hash: z.string().nullable().optional(),
   mediaMetadata: z.unknown().nullable().optional(),
   transcriptionProgress: z.number().int().min(0).max(100).optional(),
+  processingError: z.string().nullable().optional(),
+  prepareAttempts: z.number().int().min(0).optional(),
+  prepareStartedAt: z.coerce.date().nullable().optional(),
+  prepareCompletedAt: z.coerce.date().nullable().optional(),
   folderId: z.string().nullable().optional(),
 })
 
@@ -35,6 +39,10 @@ export const patchProjectBodySchema = z
     mediaMetadata: z.unknown().nullable().optional(),
     status: projectStatusSchema.optional(),
     transcriptionProgress: z.number().int().min(0).max(100).optional(),
+    processingError: z.string().nullable().optional(),
+    prepareAttempts: z.number().int().min(0).optional(),
+    prepareStartedAt: z.coerce.date().nullable().optional(),
+    prepareCompletedAt: z.coerce.date().nullable().optional(),
     duration: z.number().int().nonnegative().optional(),
     title: z.string().trim().min(1).optional(),
     thumbnailUrl: z.string().trim().min(1).optional(),
@@ -48,6 +56,10 @@ export const patchProjectBodySchema = z
       o.mediaMetadata !== undefined ||
       o.status !== undefined ||
       o.transcriptionProgress !== undefined ||
+      o.processingError !== undefined ||
+      o.prepareAttempts !== undefined ||
+      o.prepareStartedAt !== undefined ||
+      o.prepareCompletedAt !== undefined ||
       o.duration !== undefined ||
       o.title !== undefined ||
       o.thumbnailUrl !== undefined ||

@@ -64,6 +64,20 @@
       "when": 1775689710680,
       "tag": "0008_wakeful_eternity",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1775689800000,
+      "tag": "0009_prepare_queue_pipeline",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1775690400000,
+      "tag": "0010_pending_auto_transcription_options",
+      "breakpoints": true
     }
   ]
 }

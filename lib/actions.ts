@@ -24,6 +24,7 @@ import {
   transcripts,
   textOverlays,
 } from './db/schema'
+import { kickPrepareWorker } from './project-prepare-worker'
 import { withAccessibleMediaUrls } from './s3-storage'
 import type { TextOverlay, Transcript, TranscriptSummary, VideoProject } from './types'
 import {
@@ -39,6 +40,9 @@ import {
 
 export async function getProjectData(projectId: string, transcriptId?: string | null) {
   await assertProjectAccess(projectId, 'viewer')
+  void kickPrepareWorker().catch((error) => {
+    console.error('getProjectData worker kick failed:', error)
+  })
 
   const projRows = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1)
   if (projRows.length === 0) return null

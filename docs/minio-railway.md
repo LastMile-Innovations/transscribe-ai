@@ -13,6 +13,8 @@
   - bucket access on the server endpoint
   - presigned `PUT`
   - presigned `GET`
+  - multipart part upload `ETag` responses
+  - bucket CORS `ExposeHeaders` coverage for `ETag`
   - unsigned public URL behavior (`200` in public mode, `403` in presigned/private mode)
   - smoke object cleanup
 - If Railway variables and the smoke test disagree about the bucket name, reconcile the dashboard values before relying on future automation.
@@ -31,6 +33,10 @@
   - keep the threshold low enough that medium-large phone/laptop uploads use multipart
   - start with `16 MB` parts and `4` parallel uploads
   - increase part size first if MinIO shows too many concurrent requests; increase parallelism only after verifying the client still has unused upstream bandwidth
+- Required bucket CORS for browser multipart uploads:
+  - allow your app origin for `PUT`, `GET`, `HEAD`, and `POST`
+  - expose the `ETag` response header
+  - without `ETag` in `ExposeHeaders`, multipart uploads can upload bytes successfully but still fail to finalize in the browser
 
 ## Playback URL refresh
 
@@ -55,4 +61,3 @@ MINIO_LIFECYCLE_PREFIXES="debug/,temp/" MINIO_LIFECYCLE_EXPIRE_DAYS=30 pnpm stor
 ```
 
 - The lifecycle script preserves existing unmanaged rules and only replaces the managed `cursor-expire-*` rules for the configured prefixes.
-
