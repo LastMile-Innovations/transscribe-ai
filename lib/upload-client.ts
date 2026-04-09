@@ -18,9 +18,14 @@ export type MultipartUploadPlan = {
   uploadId: string
   partSize: number
   maxParallelParts: number
+  /** Part URLs for the first batch (or all parts when totalParts equals this list length). */
   parts: Array<{ partNumber: number; signedUrl: string }>
   url: string | null
   thresholdBytes: number
+  /** Total S3 part count; may be greater than parts.length when URLs are presigned in batches. */
+  totalParts: number
+  /** Server batch size for aligned follow-up presign requests. */
+  partPresignBatchSize?: number
 }
 
 export type UploadPlan = SingleUploadPlan | MultipartUploadPlan
@@ -82,6 +87,36 @@ async function runWithUploadRetries<T>(
   throw lastError ?? new Error('Upload failed after retries.')
 }
 
+/** Coalesce progress callbacks to one emit per animation frame (reduces React churn during multipart). */
+function createUploadProgressThrottle(onProgress: (loaded: number, total: number) => void) {
+  let raf = 0
+  let pending: { loaded: number; total: number } | null = null
+  const tick = () => {
+    raf = 0
+    if (!pending) return
+    const p = pending
+    pending = null
+    onProgress(p.loaded, p.total)
+  }
+  return {
+    emit(loaded: number, total: number) {
+      pending = { loaded, total }
+      if (!raf) raf = requestAnimationFrame(tick)
+    },
+    flush() {
+      if (raf) {
+        cancelAnimationFrame(raf)
+        raf = 0
+      }
+      if (pending) {
+        const p = pending
+        pending = null
+        onProgress(p.loaded, p.total)
+      }
+    },
+  }
+}
+
 export function createUploadProjectStub(input: {
   id: string
   workspaceProjectId: string
@@ -115,8 +150,11 @@ export function startPlannedUpload(input: {
   onProgress: (loaded: number, total: number) => void
   onMultipartComplete: (parts: Array<{ ETag: string; PartNumber: number }>, uploadId: string) => Promise<void>
   onMultipartAbort: (uploadId: string) => Promise<void>
+  /** Required when multipart plan has fewer signed URLs than totalParts; fetches presigned PUT URLs for part numbers. */
+  fetchMultipartPartUrls?: (partNumbers: number[]) => Promise<Array<{ partNumber: number; signedUrl: string }>>
 }): UploadHandle & { done: Promise<void> } {
   const putContentType = (input.contentType ?? input.file.type).trim() || 'application/octet-stream'
+  const progress = createUploadProgressThrottle(input.onProgress)
 
   if (input.plan.uploadType === 'single') {
     const plan = input.plan
@@ -132,7 +170,7 @@ export function startPlannedUpload(input: {
 
         xhr.upload.onprogress = (event) => {
           if (!event.lengthComputable || event.total <= 0) return
-          input.onProgress(event.loaded, event.total)
+          progress.emit(event.loaded, event.total)
         }
 
         xhr.onload = () => {
@@ -162,7 +200,9 @@ export function startPlannedUpload(input: {
         xhr.send(input.file)
       })
 
-    const done = runWithUploadRetries(() => cancelled, sendOnce)
+    const done = runWithUploadRetries(() => cancelled, sendOnce).finally(() => {
+      progress.flush()
+    })
 
     return {
       abort: () => {
@@ -174,16 +214,87 @@ export function startPlannedUpload(input: {
   }
 
   const plan = input.plan
+  const totalParts = plan.totalParts
+  const urlBatchSize = Math.max(1, plan.partPresignBatchSize ?? 64)
+
+  if (totalParts > plan.parts.length && !input.fetchMultipartPartUrls) {
+    throw new Error('fetchMultipartPartUrls is required when multipart URLs are presigned in batches.')
+  }
+
   let cancelled = false
   let completed = false
   const activePartXhrs = new Map<number, XMLHttpRequest>()
   const partLoadedBytes = new Map<number, number>()
   const uploadedParts = new Map<number, string>()
+  const urlByPart = new Map<number, string>(plan.parts.map((p) => [p.partNumber, p.signedUrl]))
+
+  let urlFetchChain: Promise<void> = Promise.resolve()
+
+  /** Sum of last-reported bytes per part — updated incrementally (O(1)) instead of scanning the map each progress tick. */
+  let multipartLoadedTotal = 0
+
+  const setPartLoaded = (partNo: number, loaded: number) => {
+    const prev = partLoadedBytes.get(partNo) ?? 0
+    multipartLoadedTotal += loaded - prev
+    partLoadedBytes.set(partNo, loaded)
+  }
+
+  const schedulePrefetchAfterBatchEnd = (batchEnd: number) => {
+    const fetchMore = input.fetchMultipartPartUrls
+    if (!fetchMore || cancelled) return
+    const nextStart = batchEnd + 1
+    if (nextStart > totalParts || urlByPart.has(nextStart)) return
+    urlFetchChain = urlFetchChain.then(async () => {
+      if (cancelled) return
+      if (nextStart > totalParts || urlByPart.has(nextStart)) return
+      const batchStart = Math.floor((nextStart - 1) / urlBatchSize) * urlBatchSize + 1
+      const batchEndInner = Math.min(batchStart + urlBatchSize - 1, totalParts)
+      const need: number[] = []
+      for (let i = batchStart; i <= batchEndInner; i++) {
+        if (!urlByPart.has(i)) need.push(i)
+      }
+      if (need.length === 0) return
+      const fetched = await fetchMore(need)
+      for (const p of fetched) {
+        urlByPart.set(p.partNumber, p.signedUrl)
+      }
+      schedulePrefetchAfterBatchEnd(batchEndInner)
+    })
+  }
+
+  const ensurePartUrlsFor = async (partNo: number) => {
+    if (urlByPart.has(partNo)) return
+    urlFetchChain = urlFetchChain.then(async () => {
+      if (cancelled) throw new Error(UPLOAD_CANCELLED_MESSAGE)
+      if (urlByPart.has(partNo)) return
+      const batchStart = Math.floor((partNo - 1) / urlBatchSize) * urlBatchSize + 1
+      const batchEnd = Math.min(batchStart + urlBatchSize - 1, totalParts)
+      const need: number[] = []
+      for (let i = batchStart; i <= batchEnd; i++) {
+        if (!urlByPart.has(i)) need.push(i)
+      }
+      if (need.length === 0) return
+      const fetched = await input.fetchMultipartPartUrls!(need)
+      for (const p of fetched) {
+        urlByPart.set(p.partNumber, p.signedUrl)
+      }
+      schedulePrefetchAfterBatchEnd(batchEnd)
+    })
+    await urlFetchChain
+    if (!urlByPart.has(partNo)) {
+      throw new Error(`Could not presign multipart part ${partNo}.`)
+    }
+  }
+
+  if (totalParts > plan.parts.length && input.fetchMultipartPartUrls) {
+    const lastSeeded = plan.parts.reduce((m, p) => Math.max(m, p.partNumber), 0)
+    if (lastSeeded < totalParts) {
+      schedulePrefetchAfterBatchEnd(lastSeeded)
+    }
+  }
 
   const syncMultipartProgress = () => {
-    let loaded = 0
-    for (const n of partLoadedBytes.values()) loaded += n
-    input.onProgress(Math.min(loaded, input.file.size), input.file.size)
+    progress.emit(Math.min(multipartLoadedTotal, input.file.size), input.file.size)
   }
 
   const abort = () => {
@@ -194,23 +305,28 @@ export function startPlannedUpload(input: {
     activePartXhrs.clear()
   }
 
-  const uploadPart = (part: { partNumber: number; signedUrl: string }) => {
-    const start = (part.partNumber - 1) * plan.partSize
+  const uploadPart = async (partNo: number) => {
+    await ensurePartUrlsFor(partNo)
+    const signedUrl = urlByPart.get(partNo)
+    if (!signedUrl) {
+      throw new Error(`Missing signed URL for multipart part ${partNo}.`)
+    }
+
+    const start = (partNo - 1) * plan.partSize
     const end = Math.min(start + plan.partSize, input.file.size)
     const chunk = input.file.slice(start, end)
     const chunkSize = end - start
-    const partNo = part.partNumber
 
     const sendPartOnce = () =>
       new Promise<string>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
         activePartXhrs.set(partNo, xhr)
-        xhr.open('PUT', part.signedUrl)
+        xhr.open('PUT', signedUrl)
         xhr.setRequestHeader('Content-Type', putContentType)
 
         xhr.upload.onprogress = (event) => {
           const loaded = event.lengthComputable ? Math.min(event.loaded, chunkSize) : 0
-          partLoadedBytes.set(partNo, loaded)
+          setPartLoaded(partNo, loaded)
           syncMultipartProgress()
         }
 
@@ -238,7 +354,7 @@ export function startPlannedUpload(input: {
             return
           }
 
-          partLoadedBytes.set(partNo, chunkSize)
+          setPartLoaded(partNo, chunkSize)
           syncMultipartProgress()
           resolve(etagHeader)
         }
@@ -259,7 +375,9 @@ export function startPlannedUpload(input: {
       () => cancelled,
       sendPartOnce,
       async () => {
+        const prev = partLoadedBytes.get(partNo) ?? 0
         partLoadedBytes.delete(partNo)
+        multipartLoadedTotal -= prev
         syncMultipartProgress()
       },
     )
@@ -267,36 +385,39 @@ export function startPlannedUpload(input: {
 
   const done = (async () => {
     try {
-      const maxParallelParts = Math.max(1, Math.min(plan.maxParallelParts, plan.parts.length))
-      let nextPartIndex = 0
+      const maxParallelParts = Math.max(1, Math.min(plan.maxParallelParts, totalParts))
+      let nextPartNumber = 1
 
       const runMultipartWorker = async () => {
         while (true) {
           if (cancelled) throw new Error(UPLOAD_CANCELLED_MESSAGE)
-          const part = plan.parts[nextPartIndex++]
-          if (!part) return
-          const etag = await uploadPart(part)
-          uploadedParts.set(part.partNumber, etag)
+          const partNo = nextPartNumber
+          nextPartNumber += 1
+          if (partNo > totalParts) return
+          const etag = await uploadPart(partNo)
+          uploadedParts.set(partNo, etag)
         }
       }
 
       await Promise.all(Array.from({ length: maxParallelParts }, () => runMultipartWorker()))
       if (cancelled) throw new Error(UPLOAD_CANCELLED_MESSAGE)
 
-      const completedParts = plan.parts
-        .map((p) => ({
-          ETag: uploadedParts.get(p.partNumber) ?? '',
-          PartNumber: p.partNumber,
+      const completedParts = Array.from({ length: totalParts }, (_, i) => i + 1)
+        .map((partNumber) => ({
+          ETag: uploadedParts.get(partNumber) ?? '',
+          PartNumber: partNumber,
         }))
         .filter((p) => p.ETag)
 
-      if (completedParts.length !== plan.parts.length) {
+      if (completedParts.length !== totalParts) {
         throw new Error('Multipart upload finished with missing parts.')
       }
 
+      progress.flush()
       await input.onMultipartComplete(completedParts, plan.uploadId)
       completed = true
     } catch (error) {
+      progress.flush()
       if (!cancelled) {
         abort()
       }

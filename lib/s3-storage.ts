@@ -39,6 +39,7 @@ const MIN_MULTIPART_PART_SIZE_BYTES = 5 * 1024 * 1024
 const DEFAULT_MULTIPART_PART_SIZE_BYTES = 16 * 1024 * 1024
 const DEFAULT_MULTIPART_THRESHOLD_BYTES = 64 * 1024 * 1024
 const DEFAULT_MULTIPART_MAX_PARALLEL_UPLOADS = 4
+const DEFAULT_MULTIPART_PRESIGN_BATCH_PARTS = 64
 
 function encodeKeyPath(key: string): string {
   return key.split('/').map(encodeURIComponent).join('/')
@@ -231,6 +232,20 @@ export function multipartUploadMaxParallelParts(): number {
   )
 }
 
+/** Max part URLs returned per presign response or follow-up request (clamped for safety). */
+export function multipartPresignBatchPartCount(): number {
+  return Math.max(
+    1,
+    Math.min(
+      500,
+      readPositiveIntEnv(
+        'MINIO_MULTIPART_PRESIGN_BATCH_PARTS',
+        DEFAULT_MULTIPART_PRESIGN_BATCH_PARTS,
+      ),
+    ),
+  )
+}
+
 export function shouldUseMultipartUpload(fileSize: number): boolean {
   return Number.isFinite(fileSize) && fileSize >= multipartUploadThresholdBytes()
 }
@@ -404,14 +419,25 @@ export async function createMultipartUploadPlan(
   uploadId: string
   partSize: number
   maxParallelParts: number
+  partPresignBatchSize: number
+  totalParts: number
   parts: Array<{ partNumber: number; signedUrl: string }>
 }> {
   const partSize = multipartUploadPartSizeBytes()
   const totalParts = Math.max(1, Math.ceil(fileSize / partSize))
   const { uploadId } = await createMultipartUpload(objectKey, contentType)
-  const partNumbers = Array.from({ length: totalParts }, (_, index) => index + 1)
+  const batchLimit = multipartPresignBatchPartCount()
+  const initialPartCount = Math.min(totalParts, batchLimit)
+  const partNumbers = Array.from({ length: initialPartCount }, (_, index) => index + 1)
   const parts = await presignMultipartUploadParts(objectKey, uploadId, partNumbers)
-  return { uploadId, partSize, maxParallelParts: multipartUploadMaxParallelParts(), parts }
+  return {
+    uploadId,
+    partSize,
+    maxParallelParts: multipartUploadMaxParallelParts(),
+    partPresignBatchSize: batchLimit,
+    totalParts,
+    parts,
+  }
 }
 
 export async function completeMultipartUpload(

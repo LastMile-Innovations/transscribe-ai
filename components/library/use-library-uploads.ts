@@ -11,6 +11,7 @@ import { buildOriginalUploadKey } from '@/lib/media-keys'
 import { projectHasPreparedEdit } from '@/lib/project-prepare'
 import type { TranscriptionRequestOptions } from '@/lib/transcription-options'
 import { createUploadProjectStub, startPlannedUpload, type UploadHandle, type UploadPlan } from '@/lib/upload-client'
+import { libraryUploadQueueConcurrency } from '@/lib/upload-queue-concurrency'
 import { uploadWakeLockAcquire, uploadWakeLockRelease } from '@/lib/upload-wake-lock'
 import { inferVideoContentType, isVideoFileCandidate } from '@/lib/video-upload-mime'
 
@@ -31,7 +32,7 @@ export function useLibraryUploads({
   setTree: React.Dispatch<React.SetStateAction<WorkspaceTreeData | null>>
   refreshServerData: () => void
 }) {
-  const uploadQueueRef = useRef(createConcurrencyQueue(2))
+  const uploadQueueRef = useRef(createConcurrencyQueue(libraryUploadQueueConcurrency()))
   const activeUploadsRef = useRef<Map<string, UploadHandle>>(new Map())
   const queuedUploadsRef = useRef<
     Map<string, { cancel: () => void; persisted: boolean; cancelled: boolean }>
@@ -144,6 +145,7 @@ export function useLibraryUploads({
     async (input: {
       file: File
       contentType: string
+      plan: UploadPlan
       project: VideoProject
       originalKey: string
       clientCapture: ReturnType<typeof buildClientMediaCapture>
@@ -153,27 +155,11 @@ export function useLibraryUploads({
 
       const queueEntry = queuedUploadsRef.current.get(input.project.id)
       let originalPlaybackUrl: string | null = null
+      let playbackUrlFromComplete: string | undefined
+      const presignData = input.plan
 
       try {
         if (!queueEntry || queueEntry.cancelled) {
-          throw new Error('Upload cancelled.')
-        }
-
-        const presignRes = await authedFetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            workspaceProjectId: wpId,
-            filename: input.originalKey,
-            contentType: input.contentType,
-            fileSize: input.file.size,
-          }),
-        })
-        if (!presignRes.ok) {
-          throw new Error(await errorMessageFromResponse(presignRes, 'Failed to get upload URL.'))
-        }
-        const presignData = (await presignRes.json()) as UploadPlan
-        if (queueEntry?.cancelled) {
           throw new Error('Upload cancelled.')
         }
 
@@ -208,21 +194,55 @@ export function useLibraryUploads({
           processingError: null,
         })
 
-        await authedFetch(`/api/projects/${input.project.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'uploading', transcriptionProgress: 10 }),
-        })
-
         const uploadStartedAt = performance.now()
+        const speedState = { t: uploadStartedAt, loaded: 0, speedBps: 0 }
         const startedUpload = startPlannedUpload({
           file: input.file,
           contentType: input.contentType,
           plan: presignData,
+          fetchMultipartPartUrls:
+            presignData.uploadType === 'multipart'
+              ? async (partNumbers) => {
+                  const res = await authedFetch('/api/upload/part-urls', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      workspaceProjectId: wpId,
+                      filename: input.originalKey,
+                      uploadId: presignData.uploadId,
+                      partNumbers,
+                    }),
+                  })
+                  if (!res.ok) {
+                    throw new Error(
+                      await errorMessageFromResponse(
+                        res,
+                        'Could not get signed URLs for upload parts.',
+                      ),
+                    )
+                  }
+                  const data = (await res.json()) as {
+                    parts: Array<{ partNumber: number; signedUrl: string }>
+                  }
+                  return data.parts
+                }
+              : undefined,
           onProgress: (loaded, total) => {
             if (!Number.isFinite(total) || total <= 0) return
-            const elapsedSec = Math.max((performance.now() - uploadStartedAt) / 1000, 0.05)
-            const speedBps = loaded / elapsedSec
+            const now = performance.now()
+            const dtSec = (now - speedState.t) / 1000
+            if (dtSec >= 0.08 && loaded >= speedState.loaded) {
+              const instant = (loaded - speedState.loaded) / Math.max(dtSec, 1e-6)
+              speedState.speedBps =
+                speedState.speedBps === 0
+                  ? instant
+                  : speedState.speedBps * 0.82 + instant * 0.18
+              speedState.t = now
+              speedState.loaded = loaded
+            }
+            const wallSec = Math.max((now - uploadStartedAt) / 1000, 0.05)
+            const speedBps =
+              speedState.speedBps > 0 ? speedState.speedBps : loaded / wallSec
             const transcriptionProgress = Math.round((loaded / total) * 40) + 10
             updateProjectLocally(input.project.id, {
               transcriptionProgress,
@@ -251,6 +271,14 @@ export function useLibraryUploads({
                 ),
               )
             }
+            try {
+              const body = (await completeRes.json()) as { url?: string | null }
+              if (typeof body.url === 'string' && body.url.length > 0) {
+                playbackUrlFromComplete = body.url
+              }
+            } catch {
+              // Response may omit JSON; presign plan URL remains fallback.
+            }
           },
           onMultipartAbort: async (uploadId) => {
             await authedFetch('/api/upload/multipart', {
@@ -270,7 +298,7 @@ export function useLibraryUploads({
         await startedUpload.done
         activeUploadsRef.current.delete(input.project.id)
 
-        originalPlaybackUrl = presignData.url
+        originalPlaybackUrl = playbackUrlFromComplete ?? presignData.url
         updateProjectLocally(input.project.id, {
           status: 'queued_prepare',
           fileUrl: originalPlaybackUrl,
@@ -396,17 +424,34 @@ export function useLibraryUploads({
             processingError: null,
           })
 
-          const preview = await extractLocalVideoPreview(file, id)
-          const queueEntry = queuedUploadsRef.current.get(id)
-          if (!queueEntry || queueEntry.cancelled) {
-            throw new Error('Upload cancelled.')
-          }
-
           const uploadContentType = inferVideoContentType(file.name, file.type)
           if (!uploadContentType) {
             removeProjectLocally(id)
             toast.error('This file does not look like a supported video. Try MP4, MOV, WebM, or AVI.')
             return
+          }
+
+          const fetchUploadPlan = async (): Promise<UploadPlan> => {
+            const presignRes = await authedFetch('/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                workspaceProjectId: wpId,
+                filename: originalKey,
+                contentType: uploadContentType,
+                fileSize: file.size,
+              }),
+            })
+            if (!presignRes.ok) {
+              throw new Error(await errorMessageFromResponse(presignRes, 'Failed to get upload URL.'))
+            }
+            return (await presignRes.json()) as UploadPlan
+          }
+
+          const [preview, plan] = await Promise.all([extractLocalVideoPreview(file, id), fetchUploadPlan()])
+          const queueEntry = queuedUploadsRef.current.get(id)
+          if (!queueEntry || queueEntry.cancelled) {
+            throw new Error('Upload cancelled.')
           }
 
           const clientCapture = buildClientMediaCapture(
@@ -425,6 +470,8 @@ export function useLibraryUploads({
             ...placeholderProject,
             duration: preview.duration,
             thumbnailUrl: preview.thumbnailUrl,
+            transcriptionProgress: 10,
+            status: 'uploading' as const,
             uploadQueueState: 'running' as const,
             mediaStep: 'upload' as const,
           }
@@ -432,6 +479,7 @@ export function useLibraryUploads({
           updateProjectLocally(id, {
             duration: preview.duration,
             thumbnailUrl: preview.thumbnailUrl,
+            transcriptionProgress: 10,
             uploadQueueState: 'running',
             mediaStep: 'upload',
           })
@@ -439,6 +487,7 @@ export function useLibraryUploads({
           await runQueuedUpload({
             file,
             contentType: uploadContentType,
+            plan,
             project,
             originalKey,
             clientCapture,
@@ -464,6 +513,7 @@ export function useLibraryUploads({
     },
     [
       addProjectLocally,
+      authedFetch,
       browseFilter,
       removeProjectLocally,
       runQueuedUpload,
@@ -503,8 +553,9 @@ export function useLibraryUploads({
       const mobileHint =
         'Keep this tab open and in the foreground for large files; plug in if you can. On iOS, Low Power Mode may slow uploads. We keep your screen awake while transferring when the browser allows.'
 
+      const maxParallel = libraryUploadQueueConcurrency()
       if (validFiles.length > 1) {
-        toast.info(`Preparing ${validFiles.length} uploads (up to 2 at a time)…`, {
+        toast.info(`Preparing ${validFiles.length} uploads (up to ${maxParallel} at a time)…`, {
           description: mobileHint,
           duration: 10_000,
         })
