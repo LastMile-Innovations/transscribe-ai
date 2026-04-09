@@ -8,6 +8,7 @@ import { EditorShell } from '@/components/editor-shell'
 import { AIAssistant } from '@/components/ai-assistant'
 import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
+import { clampPlaybackTime } from '@/lib/video-playback'
 
 export default function EditorPageClient({
   projectId,
@@ -47,13 +48,12 @@ export default function EditorPageClient({
         dispatch({ type: 'SET_PLAYING', isPlaying: !state.isPlaying })
       } else if (e.key === 'j') {
         e.preventDefault()
-        const newTime = Math.max(0, state.playerTime - 5000)
+        const newTime = clampPlaybackTime(state.playerTime - 5000, project?.duration ?? 0, state.trimRange)
         window.dispatchEvent(new CustomEvent('app:seek', { detail: { timeMs: newTime } }))
         dispatch({ type: 'SET_PLAYER_TIME', time: newTime })
       } else if (e.key === 'l') {
         e.preventDefault()
-        const duration = project?.duration ?? 0
-        const newTime = Math.min(duration, state.playerTime + 5000)
+        const newTime = clampPlaybackTime(state.playerTime + 5000, project?.duration ?? 0, state.trimRange)
         window.dispatchEvent(new CustomEvent('app:seek', { detail: { timeMs: newTime } }))
         dispatch({ type: 'SET_PLAYER_TIME', time: newTime })
       } else if (e.key === '/') {
@@ -65,7 +65,7 @@ export default function EditorPageClient({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [state.isPlaying, state.playerTime, project?.duration, dispatch])
+  }, [state.isPlaying, state.playerTime, state.trimRange, project?.duration, dispatch])
 
   useEffect(() => {
     const handleOpenAi = () => setAiOpen(true)

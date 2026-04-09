@@ -1,32 +1,28 @@
 'use client'
 
 import { useRef, useEffect, useCallback, useState } from 'react'
-import {
-  Play,
-  Pause,
-  Captions,
-  Scissors,
-  Keyboard,
-} from 'lucide-react'
+import { Play, Pause, Captions, Scissors, Keyboard } from 'lucide-react'
 import { AspectRatio } from '@/components/ui/aspect-ratio'
 import { Badge } from '@/components/ui/badge'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Kbd } from '@/components/ui/kbd'
 import { useAuthedFetch } from '@/lib/authed-fetch'
 import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
+import { clampPlaybackTime } from '@/lib/video-playback'
 import { VideoTimeline } from './video-timeline'
 import { VideoControls } from './video-controls'
 
 function formatTime(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  }
+
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
@@ -46,9 +42,13 @@ export function VideoPlayer({
   const [volume, setVolume] = useState(80)
   const [muted, setMuted] = useState(false)
   const [showControls, setShowControls] = useState(true)
+  const [isScrubbing, setIsScrubbing] = useState(false)
+  const [previewTime, setPreviewTime] = useState<number | null>(null)
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshInFlightRef = useRef<Promise<string | null> | null>(null)
   const playbackRetryRef = useRef(false)
+  const [localTime, setLocalTime] = useState(state.playerTime)
+  const lastGlobalSyncRef = useRef(state.playerTime)
 
   const project = state.projects.find((p) => p.id === state.activeProjectId)
   const duration = project?.duration ?? 0
@@ -102,19 +102,42 @@ export function VideoPlayer({
     [authedFetch, dispatch, project],
   )
 
-  // Global seek listener
+  const syncSeek = useCallback(
+    (
+      ms: number,
+      options?: {
+        pausePlayback?: boolean
+        updateVideoElement?: boolean
+      },
+    ) => {
+      const clamped = clampPlaybackTime(ms, duration, trimRange ?? null)
+
+      if (options?.pausePlayback && isPlaying) {
+        dispatch({ type: 'SET_PLAYING', isPlaying: false })
+      }
+
+      if (options?.updateVideoElement !== false && videoRef.current) {
+        videoRef.current.currentTime = clamped / 1000
+      }
+
+      setLocalTime(clamped)
+      lastGlobalSyncRef.current = clamped
+      dispatch({ type: 'SET_PLAYER_TIME', time: clamped })
+      return clamped
+    },
+    [dispatch, duration, isPlaying, trimRange],
+  )
+
   useEffect(() => {
     const handleSeek = (e: Event) => {
       const ce = e as CustomEvent<{ timeMs: number }>
-      if (videoRef.current) {
-        videoRef.current.currentTime = ce.detail.timeMs / 1000
-      }
+      syncSeek(ce.detail.timeMs)
     }
+
     window.addEventListener('app:seek', handleSeek)
     return () => window.removeEventListener('app:seek', handleSeek)
-  }, [])
+  }, [syncSeek])
 
-  // Sync play/pause state with video element
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -149,40 +172,32 @@ export function VideoPlayer({
     }
   }, [dispatch, isPlaying, project?.fileUrl, project?.id, refreshPlaybackUrl])
 
-  const [localTime, setLocalTime] = useState(state.playerTime)
-  const lastGlobalSyncRef = useRef(state.playerTime)
-
-  // Sync local time when global time changes (e.g., from clicking a segment)
   useEffect(() => {
+    if (isScrubbing) return
     if (Math.abs(state.playerTime - localTime) > 500) {
       setLocalTime(state.playerTime)
       lastGlobalSyncRef.current = state.playerTime
     }
-  }, [state.playerTime, localTime])
+  }, [isScrubbing, state.playerTime, localTime])
 
-  // Time update listener
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
 
     const onTimeUpdate = () => {
+      if (isScrubbing) return
+
       const ms = Math.round(video.currentTime * 1000)
       setLocalTime(ms)
 
-      // Throttle global state updates to ~500ms to reduce re-renders
       if (Math.abs(ms - lastGlobalSyncRef.current) >= 500) {
         dispatch({ type: 'SET_PLAYER_TIME', time: ms })
         lastGlobalSyncRef.current = ms
       }
 
-      // Respect trim out-point
       if (trimRange && ms >= trimRange.end) {
         video.pause()
-        video.currentTime = (trimRange.start ?? 0) / 1000
-        dispatch({ type: 'SET_PLAYING', isPlaying: false })
-        dispatch({ type: 'SET_PLAYER_TIME', time: trimRange.start ?? 0 })
-        setLocalTime(trimRange.start ?? 0)
-        lastGlobalSyncRef.current = trimRange.start ?? 0
+        syncSeek(trimRange.start ?? 0, { pausePlayback: true })
       }
     }
 
@@ -196,9 +211,8 @@ export function VideoPlayer({
       video.removeEventListener('timeupdate', onTimeUpdate)
       video.removeEventListener('ended', onEnded)
     }
-  }, [dispatch, trimRange])
+  }, [dispatch, isScrubbing, syncSeek, trimRange])
 
-  // Sync volume
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -206,18 +220,7 @@ export function VideoPlayer({
     video.muted = muted
   }, [volume, muted])
 
-  const seek = useCallback(
-    (ms: number) => {
-      const video = videoRef.current
-      if (!video) return
-      const clamped = Math.max(trimRange?.start ?? 0, Math.min(trimRange?.end ?? duration, ms))
-      video.currentTime = clamped / 1000
-      setLocalTime(clamped)
-      lastGlobalSyncRef.current = clamped
-      dispatch({ type: 'SET_PLAYER_TIME', time: clamped })
-    },
-    [dispatch, duration, trimRange],
-  )
+  const seek = useCallback((ms: number) => syncSeek(ms), [syncSeek])
 
   const togglePlay = useCallback(() => {
     dispatch({ type: 'SET_PLAYING', isPlaying: !isPlaying })
@@ -226,15 +229,30 @@ export function VideoPlayer({
   const skipBack = useCallback(() => seek(localTime - 5000), [seek, localTime])
   const skipForward = useCallback(() => seek(localTime + 5000), [seek, localTime])
 
-  const handleProgressClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
-      const rect = e.currentTarget.getBoundingClientRect()
-      const clientX = 'touches' in e ? e.changedTouches[0]?.clientX : e.clientX
-      if (clientX === undefined) return
-      const ratio = (clientX - rect.left) / rect.width
-      seek(Math.round(ratio * duration))
+  const handleScrubStart = useCallback(
+    (ms: number) => {
+      setIsScrubbing(true)
+      setPreviewTime(ms)
+      syncSeek(ms, { pausePlayback: true })
     },
-    [seek, duration],
+    [syncSeek],
+  )
+
+  const handleScrubChange = useCallback(
+    (ms: number) => {
+      setPreviewTime(ms)
+      syncSeek(ms, { pausePlayback: true })
+    },
+    [syncSeek],
+  )
+
+  const handleScrubEnd = useCallback(
+    (ms: number) => {
+      syncSeek(ms, { pausePlayback: true })
+      setIsScrubbing(false)
+      setPreviewTime(null)
+    },
+    [syncSeek],
   )
 
   const handleMouseMove = () => {
@@ -309,11 +327,7 @@ export function VideoPlayer({
       })
   }, [localTime, dispatch, isPlaying, project, refreshPlaybackUrl])
 
-  // Visible overlays at current time
-  const visibleOverlays = overlays.filter(
-    (o) => localTime >= o.startTime && localTime <= o.endTime,
-  )
-
+  const visibleOverlays = overlays.filter((overlay) => localTime >= overlay.startTime && localTime <= overlay.endTime)
   const isDock = layout === 'dock'
   const badgeClass =
     'border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] text-[color:var(--editor-video-chrome-fg)]'
@@ -344,7 +358,7 @@ export function VideoPlayer({
               <Badge variant="outline" className={badgeClass}>
                 <Scissors className="size-3.5" />
                 {Math.max(0, trimRange?.end ?? duration) > 0 && trimRange
-                  ? `${formatTime(trimRange?.start ?? 0)} - ${formatTime(trimRange?.end ?? duration)}`
+                  ? `${formatTime(trimRange.start ?? 0)} - ${formatTime(trimRange.end ?? duration)}`
                   : 'Full clip'}
               </Badge>
             </div>
@@ -390,12 +404,7 @@ export function VideoPlayer({
         </div>
       )}
 
-      <div
-        className={cn(
-          'relative flex-1 overflow-hidden',
-          isDock ? 'px-2 py-2' : 'px-4 py-4',
-        )}
-      >
+      <div className={cn('relative flex-1 overflow-hidden', isDock ? 'px-2 py-2' : 'px-4 py-4')}>
         <AspectRatio
           ratio={16 / 9}
           className={cn(
@@ -468,7 +477,9 @@ export function VideoPlayer({
                   fontSize: `${overlay.fontSize}px`,
                   color: overlay.fontColor,
                   fontWeight: overlay.fontWeight,
-                  backgroundColor: `${overlay.bgColor}${Math.round(overlay.bgOpacity * 255).toString(16).padStart(2, '0')}`,
+                  backgroundColor: `${overlay.bgColor}${Math.round(overlay.bgOpacity * 255)
+                    .toString(16)
+                    .padStart(2, '0')}`,
                   padding: '4px 10px',
                   borderRadius: '4px',
                   display: 'inline-block',
@@ -497,6 +508,12 @@ export function VideoPlayer({
           trimRange={trimRange ?? null}
           overlays={overlays}
           seek={seek}
+          isScrubbing={isScrubbing}
+          previewTime={previewTime}
+          onPreviewChange={setPreviewTime}
+          onScrubStart={handleScrubStart}
+          onScrubChange={handleScrubChange}
+          onScrubEnd={handleScrubEnd}
           formatTime={formatTime}
           compact={isDock}
         />
@@ -508,6 +525,8 @@ export function VideoPlayer({
           skipForward={skipForward}
           currentTime={localTime}
           duration={duration}
+          previewTime={previewTime}
+          isScrubbing={isScrubbing}
           muted={muted}
           setMuted={setMuted}
           volume={volume}

@@ -1,18 +1,8 @@
 'use client'
 
-import {
-  Play,
-  Pause,
-  Volume2,
-  VolumeX,
-  Maximize,
-  SkipBack,
-  SkipForward,
-} from 'lucide-react'
+import { Play, Pause, Volume2, VolumeX, Maximize, SkipBack, SkipForward } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
-import { Card, CardContent } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
 import { Slider } from '@/components/ui/slider'
 import { cn } from '@/lib/utils'
 
@@ -26,6 +16,8 @@ export function VideoControls({
   skipForward,
   currentTime,
   duration,
+  previewTime,
+  isScrubbing,
   muted,
   setMuted,
   volume,
@@ -40,6 +32,8 @@ export function VideoControls({
   skipForward: () => void
   currentTime: number
   duration: number
+  previewTime: number | null
+  isScrubbing: boolean
   muted: boolean
   setMuted: (muted: boolean) => void
   volume: number
@@ -48,22 +42,25 @@ export function VideoControls({
   formatTime: (ms: number) => string
   compact?: boolean
 }) {
+  const primaryTime = previewTime ?? currentTime
+  const timeLabel = isScrubbing ? 'Scrubbing' : previewTime != null ? 'Preview' : 'Playhead'
+
   return (
     <div className={cn('flex flex-wrap items-center gap-3', compact && 'gap-2')}>
       <ButtonGroup
         className={cn(
-          'rounded-full border border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] p-1.5 backdrop-blur-md',
-          compact && 'p-1',
+          'rounded-full border border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] p-1 backdrop-blur-md',
+          compact && 'p-0.5',
         )}
       >
         <Button
           variant="ghost"
           size="icon-sm"
           onClick={skipBack}
-          className={cn('size-8 rounded-full', chromeBtn)}
+          className={cn('rounded-full', chromeBtn, compact ? 'size-7' : 'size-8')}
           aria-label="Skip back 5 seconds"
         >
-          <SkipBack className={cn('size-3.5', compact && 'size-3')} />
+          <SkipBack className={cn(compact ? 'size-3' : 'size-3.5')} />
         </Button>
 
         <Button
@@ -82,70 +79,82 @@ export function VideoControls({
           variant="ghost"
           size="icon-sm"
           onClick={skipForward}
-          className={cn('size-8 rounded-full', chromeBtn)}
+          className={cn('rounded-full', chromeBtn, compact ? 'size-7' : 'size-8')}
           aria-label="Skip forward 5 seconds"
         >
-          <SkipForward className={cn('size-3.5', compact && 'size-3')} />
+          <SkipForward className={cn(compact ? 'size-3' : 'size-3.5')} />
         </Button>
       </ButtonGroup>
 
-      {!compact && (
-        <Card className="min-w-[10rem] gap-0 rounded-2xl border border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] py-0 font-mono text-xs font-medium tracking-wider text-[color:var(--editor-video-chrome-fg)] shadow-none">
-          <CardContent className="px-3 py-2">
-            <div className="flex items-center justify-between gap-3">
-              <span>Current</span>
-              <span>{formatTime(currentTime)}</span>
-            </div>
-            <div className="mt-1 flex items-center justify-between gap-3 text-[color:var(--editor-video-chrome-muted)]">
-              <span>Duration</span>
-              <span>{formatTime(duration)}</span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {compact && (
-        <span className="font-mono text-[10px] text-[color:var(--editor-video-chrome-muted)]">
-          {formatTime(currentTime)} / {formatTime(duration)}
-        </span>
-      )}
-
-      <Card className="ml-auto gap-0 rounded-2xl border border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] py-0 shadow-none backdrop-blur-md">
-        <CardContent className={cn('flex items-center gap-2 px-2 py-2', compact && 'px-1.5 py-1.5')}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setMuted(!muted)}
-            className={cn('rounded-full', chromeBtn, compact ? 'size-7' : 'size-8')}
-            aria-label={muted || volume === 0 ? 'Unmute video' : 'Mute video'}
+      <div
+        className={cn(
+          'rounded-full border border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] px-3 py-2 text-[color:var(--editor-video-chrome-fg)]',
+          compact ? 'min-w-[7.5rem] px-2.5 py-1.5' : 'min-w-[11rem]',
+        )}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span
+            className={cn(
+              'text-[10px] font-medium uppercase tracking-[0.16em] text-[color:var(--editor-video-chrome-muted)]',
+              compact && 'tracking-[0.12em]',
+            )}
           >
-            {muted || volume === 0 ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
-          </Button>
-          <div className={cn('pr-3', compact ? 'w-16' : 'w-24')}>
-            <Slider
-              min={0}
-              max={100}
-              step={1}
-              value={[muted ? 0 : volume]}
-              onValueChange={([v]) => {
-                setVolume(v)
-                setMuted(v === 0)
-              }}
-              className="[&_[data-slot=slider-range]]:bg-[color:var(--editor-video-chrome-fg)] [&_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-thumb]]:border-[color:var(--editor-video-chrome-fg)] hover:[&_[data-slot=slider-thumb]]:scale-110 transition-transform"
-            />
+            {timeLabel}
+          </span>
+          <span className={cn('font-mono tabular-nums', compact ? 'text-[10px]' : 'text-xs')}>
+            {formatTime(primaryTime)}
+          </span>
+        </div>
+        {!compact && (
+          <div className="mt-1 flex items-center justify-between gap-3">
+            <span className="text-[10px] uppercase tracking-[0.16em] text-[color:var(--editor-video-chrome-muted)]">
+              Total
+            </span>
+            <span className="font-mono text-xs tabular-nums text-[color:var(--editor-video-chrome-muted)]">
+              {formatTime(duration)}
+            </span>
           </div>
-          <Separator orientation="vertical" className="h-4 bg-[color:var(--editor-video-border)]" />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={fullscreen}
-            className={cn('rounded-full', chromeBtn, compact ? 'size-7' : 'size-8')}
-            aria-label="Toggle fullscreen"
-          >
-            <Maximize className="size-3.5" />
-          </Button>
-        </CardContent>
-      </Card>
+        )}
+      </div>
+
+      <div
+        className={cn(
+          'ml-auto flex items-center gap-2 rounded-full border border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] px-2 py-1.5 shadow-none backdrop-blur-md',
+          compact && 'px-1.5 py-1',
+        )}
+      >
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => setMuted(!muted)}
+          className={cn('rounded-full', chromeBtn, compact ? 'size-7' : 'size-8')}
+          aria-label={muted || volume === 0 ? 'Unmute video' : 'Mute video'}
+        >
+          {muted || volume === 0 ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+        </Button>
+        <div className={cn(compact ? 'w-14 pr-1' : 'w-20 pr-2')}>
+          <Slider
+            min={0}
+            max={100}
+            step={1}
+            value={[muted ? 0 : volume]}
+            onValueChange={([v]) => {
+              setVolume(v)
+              setMuted(v === 0)
+            }}
+            className="[&_[data-slot=slider-range]]:bg-[color:var(--editor-video-chrome-fg)] [&_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-thumb]]:border-[color:var(--editor-video-chrome-fg)] hover:[&_[data-slot=slider-thumb]]:scale-110 transition-transform"
+          />
+        </div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={fullscreen}
+          className={cn('rounded-full', chromeBtn, compact ? 'size-7' : 'size-8')}
+          aria-label="Toggle fullscreen"
+        >
+          <Maximize className="size-3.5" />
+        </Button>
+      </div>
     </div>
   )
 }

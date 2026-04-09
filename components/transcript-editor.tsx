@@ -9,6 +9,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { useApp } from '@/lib/app-context'
 import type { TranscriptSegment } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { clampPlaybackTime } from '@/lib/video-playback'
 import {
   addSegmentAction,
   deleteSegmentAction,
@@ -44,6 +45,7 @@ export function TranscriptEditor() {
   const transcript = state.transcript
   const playerTime = state.playerTime
   const activeProjectId = state.activeProjectId
+  const projectDuration = state.projects.find((project) => project.id === activeProjectId)?.duration ?? 0
 
   const setSegmentStatus = useCallback((segmentId: string, status: SegmentSaveState) => {
     const currentTimer = resetTimersRef.current[segmentId]
@@ -95,10 +97,11 @@ export function TranscriptEditor() {
 
   const seek = useCallback(
     (ms: number) => {
-      window.dispatchEvent(new CustomEvent('app:seek', { detail: { timeMs: ms } }))
-      dispatch({ type: 'SET_PLAYER_TIME', time: ms })
+      const clamped = clampPlaybackTime(ms, projectDuration, state.trimRange)
+      window.dispatchEvent(new CustomEvent('app:seek', { detail: { timeMs: clamped } }))
+      dispatch({ type: 'SET_PLAYER_TIME', time: clamped })
     },
-    [dispatch],
+    [dispatch, projectDuration, state.trimRange],
   )
 
   const filtered = useMemo(() => {
