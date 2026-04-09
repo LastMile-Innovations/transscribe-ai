@@ -54,10 +54,10 @@ export function TopBar({
   const libraryHref = project.workspaceProjectId ? `/?wp=${project.workspaceProjectId}` : '/'
 
   return (
-    <header className="shrink-0 border-b border-border/60 bg-background/85 backdrop-blur-md">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 md:px-4">
+    <header className="shrink-0 border-b border-border/60 bg-background/85 pt-[env(safe-area-inset-top,0px)] backdrop-blur-md">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2 py-1.5 sm:gap-x-3 sm:gap-y-2 sm:px-3 sm:py-2 md:px-4">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Button variant="ghost" size="icon-sm" asChild>
+          <Button variant="ghost" size="icon-sm" className="touch-manipulation" asChild>
             <Link href={libraryHref} aria-label="Back to library">
               <ArrowLeft className="size-4" />
             </Link>
@@ -111,13 +111,13 @@ export function TopBar({
               <Button
                 variant="outline"
                 size="icon-sm"
-                className="inline-flex lg:hidden"
+                className="inline-flex touch-manipulation lg:hidden"
                 aria-label="Project details"
               >
                 <Info className="size-4" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-80" align="end">
+            <PopoverContent className="w-[min(100vw-1.5rem,20rem)] sm:w-80" align="end">
               <p className="mb-2 text-xs font-medium text-foreground">Project</p>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap gap-2">

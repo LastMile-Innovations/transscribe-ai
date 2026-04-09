@@ -91,9 +91,10 @@ export default function EditorPageClient({
           type="button"
           size="lg"
           className={cn(
-            'fixed z-40 h-12 w-12 rounded-full border border-border/80 bg-card p-0 shadow-lg',
+            'fixed z-40 h-12 w-12 touch-manipulation rounded-full border border-border/80 bg-card p-0 shadow-lg',
             // Bottom-right avoids overlap with video timeline/controls (anchored bottom on mobile)
             'bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-[max(1.25rem,env(safe-area-inset-right))]',
+            'max-lg:h-14 max-lg:w-14 max-lg:shadow-xl max-lg:[&_svg]:size-[1.35rem]',
             'hover:bg-accent hover:text-accent-foreground',
           )}
           onClick={() => setAiOpen(true)}

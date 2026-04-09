@@ -17,29 +17,41 @@ export function EditorTabs() {
 
   return (
     <Tabs defaultValue="transcript" className="flex h-full flex-col bg-[color:var(--editor-canvas)]">
-      <div className="flex shrink-0 items-center justify-between border-b border-[color:var(--editor-panel-border)] bg-[color:var(--editor-chrome)] px-4 py-2">
-        <TabsList className="h-auto min-w-max gap-1 rounded-xl p-1 bg-transparent">
-          <TabsTrigger value="transcript" className="h-9 gap-2 rounded-lg px-3 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
+      <div className="flex shrink-0 items-center justify-between border-b border-[color:var(--editor-panel-border)] bg-[color:var(--editor-chrome)] px-2 py-1.5 sm:px-4 sm:py-2">
+        <TabsList className="h-auto w-full min-w-0 justify-start gap-0.5 overflow-x-auto rounded-xl bg-transparent p-1 sm:min-w-max sm:gap-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <TabsTrigger
+            value="transcript"
+            aria-label="Transcript"
+            className="h-10 shrink-0 touch-manipulation gap-1.5 rounded-lg px-2.5 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm sm:h-9 sm:gap-2 sm:px-3"
+          >
             <FileText className="size-3.5 shrink-0" />
-            <span>Transcript</span>
+            <span className="hidden sm:inline">Transcript</span>
             {segmentCount > 0 && (
               <Badge variant="secondary" className="ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-mono">
                 {segmentCount}
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="overlays" className="h-9 gap-2 rounded-lg px-3 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
+          <TabsTrigger
+            value="overlays"
+            aria-label="Overlays"
+            className="h-10 shrink-0 touch-manipulation gap-1.5 rounded-lg px-2.5 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm sm:h-9 sm:gap-2 sm:px-3"
+          >
             <Layers className="size-3.5 shrink-0" />
-            <span>Overlays</span>
+            <span className="hidden sm:inline">Overlays</span>
             {overlayCount > 0 && (
               <Badge variant="secondary" className="ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-mono">
                 {overlayCount}
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="trim" className="h-9 gap-2 rounded-lg px-3 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
+          <TabsTrigger
+            value="trim"
+            aria-label="Trim"
+            className="h-10 shrink-0 touch-manipulation gap-1.5 rounded-lg px-2.5 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm sm:h-9 sm:gap-2 sm:px-3"
+          >
             <Scissors className="size-3.5 shrink-0" />
-            <span>Trim</span>
+            <span className="hidden sm:inline">Trim</span>
             {trimActive && (
               <Badge className="rounded-full bg-brand/90 px-1.5 py-0 text-[10px] text-brand-foreground">
                 Active

@@ -237,7 +237,7 @@ async function activateProjectTranscription(input: {
   transcriptionProgress: number
   clearPendingAutoTranscription?: boolean
 }): Promise<void> {
-  await db
+  const updated = await db
     .update(projects)
     .set({
       status: 'transcribing',
@@ -248,6 +248,40 @@ async function activateProjectTranscription(input: {
         : {}),
     })
     .where(and(eq(projects.id, input.projectId), eq(projects.activeTranscriptId, input.transcriptId)))
+    .returning({ id: projects.id })
+
+  if (updated.length === 0) {
+    throw new Error(
+      'activateProjectTranscription: no row updated (projectId / activeTranscriptId mismatch)',
+    )
+  }
+}
+
+const ACTIVATE_TRANSCRIPTION_RETRY_DELAYS_MS = [0, 50, 150] as const
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function activateProjectTranscriptionWithRetries(input: {
+  projectId: string
+  transcriptId: string
+  transcriptionProgress: number
+  clearPendingAutoTranscription?: boolean
+}): Promise<void> {
+  let lastError: unknown
+  for (let i = 0; i < ACTIVATE_TRANSCRIPTION_RETRY_DELAYS_MS.length; i++) {
+    const waitMs = ACTIVATE_TRANSCRIPTION_RETRY_DELAYS_MS[i]
+    if (waitMs > 0) await delay(waitMs)
+    try {
+      await activateProjectTranscription(input)
+      return
+    } catch (error) {
+      lastError = error
+      console.warn(`[transcribe] activateProjectTranscription attempt ${i + 1} failed:`, error)
+    }
+  }
+  throw lastError
 }
 
 export async function submitProjectTranscription(input: {
@@ -432,13 +466,11 @@ export async function submitProjectTranscription(input: {
       throw error
     }
 
-    await activateProjectTranscription({
+    await activateProjectTranscriptionWithRetries({
       projectId: project.id,
       transcriptId: reserved.transcriptId,
       transcriptionProgress: transcriptionProgressFromAssemblyStatus(submitted.status),
       clearPendingAutoTranscription: input.clearPendingAutoTranscription,
-    }).catch((error) => {
-      console.error('Failed to persist transcribing project state:', error)
     })
 
     return {

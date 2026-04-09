@@ -1,6 +1,14 @@
 'use client'
 
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { Columns2, GripVertical, PanelTop, PictureInPicture2 } from 'lucide-react'
 import {
   ResizableHandle,
@@ -13,8 +21,14 @@ import { cn } from '@/lib/utils'
 import { EditorTabs } from '@/components/editor-tabs'
 import { VideoPlayer } from '@/components/video-player'
 
-const STORAGE_KEY = 'editor.layout.v1'
+const STORAGE_KEY_DESKTOP = 'editor.layout.v1'
+const STORAGE_KEY_MOBILE = 'editor.layout.mobile.v1'
 const LG_MIN = 1024
+
+function layoutStorageKey(): string {
+  if (typeof window === 'undefined') return STORAGE_KEY_DESKTOP
+  return window.innerWidth < LG_MIN ? STORAGE_KEY_MOBILE : STORAGE_KEY_DESKTOP
+}
 
 export type EditorLayoutMode = 'split' | 'stacked' | 'focus'
 
@@ -24,29 +38,19 @@ function isEditorLayoutMode(v: string): v is EditorLayoutMode {
   return v === 'split' || v === 'stacked' || v === 'focus'
 }
 
-function useLgUp() {
-  const [lg, setLg] = useState(true)
-
-  useEffect(() => {
-    const mql = window.matchMedia(`(min-width: ${LG_MIN}px)`)
-    const update = () => setLg(mql.matches)
-    update()
-    mql.addEventListener('change', update)
-    return () => mql.removeEventListener('change', update)
-  }, [])
-
-  return lg
-}
-
 function usePersistedEditorLayout() {
   const [mode, setModeState] = useState<EditorLayoutMode>('split')
   const [hydrated, setHydrated] = useState(false)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY)
+      const mobile = window.innerWidth < LG_MIN
+      const key = mobile ? STORAGE_KEY_MOBILE : STORAGE_KEY_DESKTOP
+      const raw = localStorage.getItem(key)
       if (raw && isEditorLayoutMode(raw)) {
         setModeState(raw)
+      } else if (mobile) {
+        setModeState('stacked')
       }
     } catch {
       /* ignore */
@@ -54,21 +58,28 @@ function usePersistedEditorLayout() {
     setHydrated(true)
   }, [])
 
-  const setMode = useCallback((m: EditorLayoutMode) => {
-    setModeState(m)
+  const persistMode = useCallback((m: EditorLayoutMode) => {
     try {
-      localStorage.setItem(STORAGE_KEY, m)
+      localStorage.setItem(layoutStorageKey(), m)
     } catch {
       /* ignore */
     }
   }, [])
+
+  const setMode = useCallback(
+    (m: EditorLayoutMode) => {
+      setModeState(m)
+      persistMode(m)
+    },
+    [persistMode],
+  )
 
   const cycle = useCallback(() => {
     setModeState((prev) => {
       const idx = MODES.indexOf(prev)
       const next = MODES[(idx + 1) % MODES.length]!
       try {
-        localStorage.setItem(STORAGE_KEY, next)
+        localStorage.setItem(layoutStorageKey(), next)
       } catch {
         /* ignore */
       }
@@ -228,7 +239,7 @@ function LayoutToolbar({
           const item = (
             <ToggleGroupItem
               value={value}
-              className="gap-1.5 px-2.5 text-xs"
+              className="min-h-10 gap-1.5 px-2.5 text-xs touch-manipulation lg:min-h-8"
               aria-label={`${label} view`}
             >
               {icon}
@@ -254,7 +265,7 @@ function LayoutToolbar({
           <span className="ml-1.5">Cycle layout</span>
         </p>
       ) : (
-        <p className="max-w-[15rem] text-[10px] leading-snug text-muted-foreground">
+        <p className="w-full min-w-0 text-[10px] leading-snug text-muted-foreground sm:max-w-[18rem]">
           Tap the video to play or pause. With a keyboard: J/L skip 5s, Space play/pause, ⌘/Ctrl+\ cycles layout.
         </p>
       )}
@@ -271,7 +282,6 @@ function WorkPanel({ className, children }: { className?: string; children: Reac
 }
 
 export function EditorShell() {
-  const lg = useLgUp()
   const { mode, setMode, cycle, hydrated } = usePersistedEditorLayout()
 
   useEffect(() => {
@@ -332,13 +342,13 @@ export function EditorShell() {
     </div>
   )
 
-  /* Mobile: split — editor top, video strip bottom */
+  /* Mobile: split — editor top, video strip bottom (dvh keeps toolbar/chrome in view) */
   const mobileSplit = (
     <div className="flex h-full min-h-0 flex-col gap-0 overflow-hidden rounded-xl editor-workspace-panel">
       <div className="min-h-0 flex-1 overflow-hidden">
         <EditorTabs />
       </div>
-      <div className="h-[35vh] min-h-[17rem] shrink-0 border-t border-[color:var(--editor-panel-border)] bg-[color:var(--editor-canvas)]">
+      <div className="h-[min(34dvh,220px)] min-h-[13rem] max-h-[38dvh] shrink-0 border-t border-[color:var(--editor-panel-border)] bg-[color:var(--editor-canvas)]">
         {renderVideo('sidebar', { showTouchPlaybackHint: true })}
       </div>
     </div>
@@ -347,7 +357,7 @@ export function EditorShell() {
   /* Mobile: stacked — video top */
   const mobileStacked = (
     <div className="flex h-full min-h-0 flex-col gap-0 overflow-hidden rounded-xl editor-workspace-panel">
-      <div className="h-[38vh] min-h-[12rem] shrink-0 border-b border-[color:var(--editor-panel-border)]">
+      <div className="h-[min(38dvh,260px)] min-h-[12rem] max-h-[42dvh] shrink-0 border-b border-[color:var(--editor-panel-border)]">
         {renderVideo('sidebar', { showTouchPlaybackHint: true })}
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -363,10 +373,9 @@ export function EditorShell() {
         <EditorTabs />
       </div>
       <div
-        className="editor-workspace-panel shrink-0 overflow-hidden rounded-b-xl border-t border-[color:var(--editor-panel-border)] shadow-lg"
+        className="editor-workspace-panel max-h-[min(38dvh,280px)] min-h-[12rem] shrink-0 overflow-hidden rounded-b-xl border-t border-[color:var(--editor-panel-border)] shadow-lg"
         style={{
           paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))',
-          maxHeight: 'min(42vh, 280px)',
         }}
       >
         {renderVideo('dock', { showTouchPlaybackHint: true })}
@@ -387,22 +396,20 @@ export function EditorShell() {
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
       aria-label="Transcript editor workspace"
     >
-      {lg && (
+      <div className="mb-2 hidden shrink-0 justify-end sm:justify-start lg:mb-3 lg:flex lg:justify-between">
         <LayoutToolbar
           mode={hydrated ? mode : 'split'}
           setMode={setMode}
           layoutTooltipsEnabled
         />
-      )}
-      {!lg && (
-        <div className="mb-2 flex shrink-0 justify-end sm:justify-start">
-          <LayoutToolbar
-            mode={hydrated ? mode : 'split'}
-            setMode={setMode}
-            layoutTooltipsEnabled={false}
-          />
-        </div>
-      )}
+      </div>
+      <div className="mb-2 flex shrink-0 justify-end sm:justify-start lg:hidden">
+        <LayoutToolbar
+          mode={hydrated ? mode : 'stacked'}
+          setMode={setMode}
+          layoutTooltipsEnabled={false}
+        />
+      </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className="hidden h-full lg:block">{desktopBody}</div>
         <div className="h-full lg:hidden">{mobileBody}</div>

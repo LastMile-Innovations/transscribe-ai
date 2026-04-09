@@ -354,7 +354,14 @@ export function LibraryPageClient({
           })
           refreshServerData()
           toast.success('Transcription complete', {
-            description: 'Open the editor to review and edit.',
+            description: 'Open the editor to review and edit this transcript.',
+            action: {
+              label: 'Open in editor',
+              onClick: () => {
+                dispatch({ type: 'SET_ACTIVE_PROJECT', id: projectId })
+                router.push(`/editor/${projectId}?t=${result.transcriptId}`)
+              },
+            },
           })
           return
         }
@@ -388,6 +395,7 @@ export function LibraryPageClient({
       refreshServerData,
       currentTranscriptionOptions,
       authedFetch,
+      router,
     ],
   )
 

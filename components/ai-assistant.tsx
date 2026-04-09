@@ -220,7 +220,7 @@ export function AIAssistant() {
 
   useEffect(() => {
     transcriptTextRef.current =
-      state.transcript?.segments.map((s) => s.text).join(' ') ?? ''
+      state.transcript?.segments.map((s) => `${s.speaker}: ${s.text}`).join('\n\n') ?? ''
   }, [state.transcript])
 
   useEffect(() => {

@@ -1,7 +1,14 @@
 import { AssemblyAI } from 'assemblyai'
 import { and, eq, gt, ne } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { projects, transcripts, transcriptSegments, type ProjectRow, type ProjectStatus } from '@/lib/db/schema'
+import {
+  projects,
+  transcripts,
+  transcriptSegments,
+  type ProjectRow,
+  type ProjectStatus,
+  type StoredTranscriptWord,
+} from '@/lib/db/schema'
 
 type TranscriptRow = typeof transcripts.$inferSelect
 type ProjectSyncRow = Pick<ProjectRow, 'id' | 'status' | 'activeTranscriptId'>
@@ -37,15 +44,44 @@ export function transcriptionProgressFromAssemblyStatus(assemblyStatus: string):
   }
 }
 
+/** When `activeTranscriptId` is null during transcribing, only this AssemblyAI job may update project state. */
+export type TranscriptProjectSyncContext = {
+  assemblyAiJobId: string
+  transcriptAssemblyAiId: string | null
+}
+
 export function transcriptOwnsProjectState(
   project: Pick<ProjectSyncRow, 'status' | 'activeTranscriptId'>,
   transcriptId: string,
+  syncContext?: TranscriptProjectSyncContext,
 ): boolean {
-  return project.activeTranscriptId === transcriptId || (project.activeTranscriptId == null && project.status === 'transcribing')
+  if (project.activeTranscriptId === transcriptId) return true
+  if (project.activeTranscriptId != null || project.status !== 'transcribing') return false
+  const job = syncContext?.assemblyAiJobId
+  const stored = syncContext?.transcriptAssemblyAiId
+  return Boolean(job && stored && stored === job)
+}
+
+function transcriptSyncContext(
+  assemblyAiJobId: string,
+  transcriptAssemblyAiId: string | null | undefined,
+): TranscriptProjectSyncContext {
+  return { assemblyAiJobId, transcriptAssemblyAiId: transcriptAssemblyAiId ?? null }
 }
 
 export function projectStatusAfterTranscriptFailure(hasCompletedTranscript: boolean): ProjectStatus {
   return hasCompletedTranscript ? 'ready' : 'error'
+}
+
+function storedWordsFromApi(
+  words: { start: number; end: number; text: string; confidence?: number | null }[] | undefined | null,
+): StoredTranscriptWord[] {
+  return (words ?? []).map((w) => ({
+    start: w.start,
+    end: w.end,
+    text: w.text,
+    confidence: w.confidence ?? 0,
+  }))
 }
 
 export async function insertSegmentsFromTranscriptResult(
@@ -61,12 +97,7 @@ export async function insertSegmentsFromTranscriptResult(
       text: u.text,
       speaker: u.speaker || 'Speaker A',
       confidence: u.confidence,
-      words: (u.words || []).map((w) => ({
-        start: w.start,
-        end: w.end,
-        text: w.text,
-        confidence: w.confidence,
-      })),
+      words: storedWordsFromApi(u.words),
     }))
     await db.insert(transcriptSegments).values(segmentsToInsert)
     return
@@ -87,12 +118,7 @@ export async function insertSegmentsFromTranscriptResult(
         text,
         speaker: 'Speaker A',
         confidence,
-        words: words.map((w) => ({
-          start: w.start,
-          end: w.end,
-          text: w.text,
-          confidence: w.confidence,
-        })),
+        words: storedWordsFromApi(words),
       },
     ])
     return
@@ -138,6 +164,24 @@ async function ensureSegmentsPersisted(
   }
 }
 
+const READY_PROJECT_AFTER_TRANSCRIPT = {
+  status: 'ready' as const,
+  transcriptionProgress: 100,
+  processingError: null as string | null,
+  activeTranscriptId: null as null,
+  pendingAutoTranscriptionOptions: null as null,
+}
+
+async function markProjectReadyAfterCompletedTranscript(projectId: string, durationMs: number): Promise<void> {
+  await db
+    .update(projects)
+    .set({
+      ...READY_PROJECT_AFTER_TRANSCRIPT,
+      duration: durationMs,
+    })
+    .where(eq(projects.id, projectId))
+}
+
 async function persistCompletedTranscript(
   projectState: ProjectSyncRow,
   projectId: string,
@@ -146,6 +190,7 @@ async function persistCompletedTranscript(
   assemblyAiIdForInsert: string,
 ): Promise<{ transcriptId: string; duration: number; speechModelUsed?: string | null }> {
   const durationMs = (transcriptResult.audio_duration || 0) * 1000
+  const speechModelUsed = transcriptResult.speech_model_used
 
   if (!dbTranscript) {
     const [legacy] = await db
@@ -154,32 +199,24 @@ async function persistCompletedTranscript(
         projectId,
         language: transcriptResult.language_code || 'en',
         totalDuration: durationMs,
-        speechModel: transcriptResult.speech_model_used,
+        speechModel: speechModelUsed,
         assemblyAiTranscriptId: assemblyAiIdForInsert,
       })
       .returning()
 
     await ensureSegmentsPersisted(legacy.id, transcriptResult)
 
-    if (transcriptOwnsProjectState(projectState, legacy.id)) {
-      await db
-        .update(projects)
-        .set({
-          status: 'ready',
-          duration: durationMs,
-          transcriptionProgress: 100,
-          processingError: null,
-          activeTranscriptId: null,
-          pendingAutoTranscriptionOptions: null,
-        })
-        .where(eq(projects.id, projectId))
+    if (
+      transcriptOwnsProjectState(
+        projectState,
+        legacy.id,
+        transcriptSyncContext(assemblyAiIdForInsert, legacy.assemblyAiTranscriptId),
+      )
+    ) {
+      await markProjectReadyAfterCompletedTranscript(projectId, durationMs)
     }
 
-    return {
-      transcriptId: legacy.id,
-      duration: durationMs,
-      speechModelUsed: transcriptResult.speech_model_used,
-    }
+    return { transcriptId: legacy.id, duration: durationMs, speechModelUsed }
   }
 
   const existingSegs = await db
@@ -197,29 +234,21 @@ async function persistCompletedTranscript(
     .set({
       language: transcriptResult.language_code || dbTranscript.language,
       totalDuration: durationMs,
-      speechModel: transcriptResult.speech_model_used ?? dbTranscript.speechModel,
+      speechModel: speechModelUsed ?? dbTranscript.speechModel,
     })
     .where(eq(transcripts.id, dbTranscript.id))
 
-  if (transcriptOwnsProjectState(projectState, dbTranscript.id)) {
-    await db
-      .update(projects)
-      .set({
-        status: 'ready',
-        duration: durationMs,
-        transcriptionProgress: 100,
-        processingError: null,
-        activeTranscriptId: null,
-        pendingAutoTranscriptionOptions: null,
-      })
-      .where(eq(projects.id, projectId))
+  if (
+    transcriptOwnsProjectState(
+      projectState,
+      dbTranscript.id,
+      transcriptSyncContext(assemblyAiIdForInsert, dbTranscript.assemblyAiTranscriptId),
+    )
+  ) {
+    await markProjectReadyAfterCompletedTranscript(projectId, durationMs)
   }
 
-  return {
-    transcriptId: dbTranscript.id,
-    duration: durationMs,
-    speechModelUsed: transcriptResult.speech_model_used,
-  }
+  return { transcriptId: dbTranscript.id, duration: durationMs, speechModelUsed }
 }
 
 async function getProjectSyncState(projectId: string): Promise<ProjectSyncRow | null> {
@@ -317,9 +346,11 @@ export async function syncTranscriptFromAssemblyAi(
     }
   }
 
+  const rowSyncContext = transcriptSyncContext(assemblyAiId, dbTranscript?.assemblyAiTranscriptId)
+
   if (transcriptResult.status === 'error') {
     console.error(`[AssemblyAI] Transcription failed: ${transcriptResult.error}`)
-    if (dbTranscript && transcriptOwnsProjectState(projectState, dbTranscript.id)) {
+    if (dbTranscript && transcriptOwnsProjectState(projectState, dbTranscript.id, rowSyncContext)) {
       const hasCompletedTranscript = await projectHasCompletedTranscript(projectId, dbTranscript.id)
       await db
         .update(projects)
@@ -337,7 +368,7 @@ export async function syncTranscriptFromAssemblyAi(
   }
 
   const progress = transcriptionProgressFromAssemblyStatus(transcriptResult.status)
-  if (dbTranscript && transcriptOwnsProjectState(projectState, dbTranscript.id)) {
+  if (dbTranscript && transcriptOwnsProjectState(projectState, dbTranscript.id, rowSyncContext)) {
     await db
       .update(projects)
       .set({ transcriptionProgress: progress })
@@ -362,17 +393,16 @@ export async function syncTranscriptFromWebhook(assemblyAiId: string): Promise<v
     return
   }
 
-  const matchedRows = await db
-    .select()
+  const [row] = await db
+    .select({ id: transcripts.id, projectId: transcripts.projectId })
     .from(transcripts)
     .where(eq(transcripts.assemblyAiTranscriptId, assemblyAiId))
     .limit(1)
 
-  const dbTranscript = matchedRows[0]
-  if (!dbTranscript) {
+  if (!row) {
     console.warn('[AssemblyAI webhook] No transcript row for', assemblyAiId)
     return
   }
 
-  await syncTranscriptFromAssemblyAi(assemblyAiId, dbTranscript.projectId, dbTranscript.id)
+  await syncTranscriptFromAssemblyAi(assemblyAiId, row.projectId, row.id)
 }

@@ -76,8 +76,8 @@ export function EditorTopBarTitle({
     <button
       type="button"
       onClick={handleTitleClick}
-      className="truncate text-left text-sm font-semibold transition-colors hover:text-brand md:text-base"
-      title="Click to rename"
+      className="min-h-9 min-w-0 flex-1 touch-manipulation truncate rounded-md text-left text-sm font-semibold transition-colors hover:text-brand md:text-base"
+      title="Tap to rename"
     >
       {project.title}
     </button>

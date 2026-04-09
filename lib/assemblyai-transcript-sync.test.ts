@@ -20,12 +20,39 @@ test('transcriptOwnsProjectState follows the active transcript when present', ()
     ),
     false,
   )
+})
+
+test('transcriptOwnsProjectState legacy path requires matching AssemblyAI job id', () => {
   assert.equal(
     transcriptOwnsProjectState(
       { status: 'transcribing', activeTranscriptId: null },
       'tx-legacy',
     ),
+    false,
+  )
+  assert.equal(
+    transcriptOwnsProjectState(
+      { status: 'transcribing', activeTranscriptId: null },
+      'tx-legacy',
+      { assemblyAiJobId: 'job-a', transcriptAssemblyAiId: 'job-a' },
+    ),
     true,
+  )
+  assert.equal(
+    transcriptOwnsProjectState(
+      { status: 'transcribing', activeTranscriptId: null },
+      'tx-legacy',
+      { assemblyAiJobId: 'job-a', transcriptAssemblyAiId: 'job-b' },
+    ),
+    false,
+  )
+  assert.equal(
+    transcriptOwnsProjectState(
+      { status: 'transcribing', activeTranscriptId: null },
+      'tx-legacy',
+      { assemblyAiJobId: 'job-a', transcriptAssemblyAiId: null },
+    ),
+    false,
   )
 })
 
