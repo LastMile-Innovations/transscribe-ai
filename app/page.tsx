@@ -1,5 +1,6 @@
 import { LibraryPageClient } from '@/components/library-page-client'
 import { AppProvider } from '@/lib/app-context'
+import { listWorkspaceMembersAction } from '@/lib/actions'
 import { projectRowToVideoProject } from '@/lib/db/mappers'
 import { getWorkspaceTree, listWorkspaceProjectsForUser } from '@/lib/db/queries'
 import type { Folder, VideoProject, WorkspaceProject } from '@/lib/types'
@@ -12,6 +13,15 @@ type WorkspaceTreeData = {
   workspace: WorkspaceProject
   folders: Folder[]
   media: VideoProject[]
+}
+
+type WorkspaceMemberRow = {
+  userId: string
+  role: 'owner' | 'editor' | 'viewer'
+  createdAt: string
+  email?: string | null
+  displayName?: string | null
+  imageUrl?: string | null
 }
 
 function parseBrowseFilter(folder?: string): BrowseFilter {
@@ -30,6 +40,7 @@ export default async function LibraryPage({
 
   let workspaces: WorkspaceProject[] = []
   let tree: WorkspaceTreeData | null = null
+  let members: WorkspaceMemberRow[] = []
 
   if (userId) {
     workspaces = await listWorkspaceProjectsForUser(userId)
@@ -47,6 +58,7 @@ export default async function LibraryPage({
           folders: rawTree.folders,
           media,
         }
+        members = (await listWorkspaceMembersAction(wp)) as WorkspaceMemberRow[]
       }
     }
   }
@@ -59,6 +71,7 @@ export default async function LibraryPage({
       <LibraryPageClient
         initialWorkspaces={workspaces}
         initialTree={tree}
+        initialMembers={members}
         initialBrowseFilter={browseFilter}
       />
     </AppProvider>

@@ -19,19 +19,15 @@ import {
   Sparkles,
   ChevronRight,
   ChevronDown,
-  ArrowLeft,
   Folder as FolderIcon,
   FolderPlus,
   Trash2,
-  Users,
-  Menu,
   Pencil,
   Mic,
   AlertCircle,
 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { ThemeToggle } from '@/components/theme-toggle'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Input } from '@/components/ui/input'
@@ -53,13 +49,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -76,7 +65,17 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { LibraryHeader, WorkspaceList } from '@/components/library-header'
+import { LibraryUploadDropzone } from '@/components/library-upload-dropzone'
+import { TranscriptionSettingsPanel } from '@/components/transcription-settings-panel'
+import { WorkspacePeopleDialog } from '@/components/workspace-people-dialog'
 import { useApp } from '@/lib/app-context'
 import type { VideoProject, ProjectStatus, WorkspaceProject, Folder } from '@/lib/types'
 import { errorMessageFromResponse } from '@/lib/api-error-message'
@@ -86,7 +85,6 @@ import {
   createWorkspaceProjectAction,
   deleteFolderAction,
   deleteProjectAction,
-  listWorkspaceMembersAction,
   moveMediaToFolderAction,
   queueProjectPreparationAction,
   removeWorkspaceMemberAction,
@@ -859,10 +857,12 @@ function looksLikeFullEmail(s: string): boolean {
 export function LibraryPageClient({
   initialWorkspaces,
   initialTree,
+  initialMembers,
   initialBrowseFilter,
 }: {
   initialWorkspaces: WorkspaceProject[]
   initialTree: WorkspaceTreeData | null
+  initialMembers: WorkspaceMemberRow[]
   initialBrowseFilter: BrowseFilter
 }) {
   const router = useRouter()
@@ -871,6 +871,11 @@ export function LibraryPageClient({
   const { user } = useUser()
   const authedFetch = useAuthedFetch()
   const { state, dispatch } = useApp()
+  const uploadQueueRef = useRef(createConcurrencyQueue(2))
+  const activeUploadsRef = useRef<Map<string, UploadHandle>>(new Map())
+  const queuedUploadsRef = useRef<
+    Map<string, { cancel: () => void; persisted: boolean; cancelled: boolean }>
+  >(new Map())
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
@@ -879,33 +884,57 @@ export function LibraryPageClient({
 
   const [workspaces, setWorkspaces] = useState<WorkspaceProject[]>(initialWorkspaces)
   const [tree, setTree] = useState<WorkspaceTreeData | null>(initialTree)
-  const [treeLoading, setTreeLoading] = useState(false)
   const [browseFilter, setBrowseFilter] = useState<BrowseFilter>(initialBrowseFilter)
-  const skipInitialTreeFetchRef = useRef(initialTree?.workspace.id === wpId)
 
   useEffect(() => {
     dispatch({ type: 'SET_PROJECTS', projects: tree?.media ?? [] })
   }, [dispatch, tree])
 
-  // Update URL when browseFilter changes
+  useEffect(() => {
+    setWorkspaces(initialWorkspaces)
+  }, [initialWorkspaces])
+
+  useEffect(() => {
+    setTree((prev) => {
+      if (!initialTree) return null
+      return {
+        workspace: initialTree.workspace,
+        folders: initialTree.folders,
+        media: mergeLocalQueuedProjects(prev?.media, initialTree.media, queuedUploadsRef.current),
+      }
+    })
+  }, [initialTree])
+
+  useEffect(() => {
+    setMembers(initialMembers)
+  }, [initialMembers])
+
+  useEffect(() => {
+    setBrowseFilter(initialBrowseFilter)
+  }, [initialBrowseFilter])
+
   useEffect(() => {
     if (!wpId) return
-    const url = new URL(window.location.href)
-    if (browseFilter.mode === 'folder') {
-      url.searchParams.set('folder', browseFilter.folderId ?? 'root')
-    } else {
-      url.searchParams.delete('folder')
+    const currentFolder = searchParams.get('folder')
+    const nextFolder = browseFilter.mode === 'folder' ? browseFilter.folderId ?? 'root' : null
+    if (currentFolder === nextFolder || (!currentFolder && nextFolder === null)) {
+      return
     }
-    window.history.replaceState({}, '', url.toString())
-  }, [browseFilter, wpId])
+    const nextParams = new URLSearchParams(searchParams.toString())
+    if (nextFolder === null) {
+      nextParams.delete('folder')
+    } else {
+      nextParams.set('folder', nextFolder)
+    }
+    router.replace(`/?${nextParams.toString()}`)
+  }, [browseFilter, router, searchParams, wpId])
 
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null)
 
   const [shareOpen, setShareOpen] = useState(false)
-  const [members, setMembers] = useState<WorkspaceMemberRow[]>([])
-  const [membersLoading, setMembersLoading] = useState(false)
+  const [members, setMembers] = useState<WorkspaceMemberRow[]>(initialMembers)
   const [inviteQuery, setInviteQuery] = useState('')
   const [debouncedInviteQuery, setDebouncedInviteQuery] = useState('')
   const [memberSearchResults, setMemberSearchResults] = useState<MemberSearchHit[]>([])
@@ -937,25 +966,9 @@ export function LibraryPageClient({
   const [redactPii, setRedactPii] = useState(false)
   const [autoTranscribe, setAutoTranscribe] = useState(false)
 
-  const refetchTree = useCallback(async () => {
-    if (!wpId) return
-    try {
-      const res = await authedFetch(`/api/workspace-projects/${wpId}/tree`)
-      if (!res.ok) return
-      const data = await res.json()
-      const nextMedia = (data.media as (VideoProject & { uploadedAt: string })[]).map(mapApiMedia)
-      setTree((prev) => ({
-        workspace: {
-          ...data.workspace,
-          createdAt: new Date(data.workspace.createdAt),
-        },
-        folders: data.folders,
-        media: mergeLocalQueuedProjects(prev?.media, nextMedia, queuedUploadsRef.current),
-      }))
-    } catch (e) {
-      console.error(e)
-    }
-  }, [wpId, authedFetch])
+  const refreshServerData = useCallback(() => {
+    router.refresh()
+  }, [router])
 
   const transcriptionBusyRef = useRef<string | null>(null)
   const currentTranscriptionOptions = useCallback(
@@ -1119,7 +1132,7 @@ export function LibraryPageClient({
               ),
             }
           })
-          await refetchTree()
+          refreshServerData()
           toast.success('Transcription complete', {
             description: 'Open the editor to review and edit.',
           })
@@ -1152,32 +1165,11 @@ export function LibraryPageClient({
       state.projects,
       tree,
       dispatch,
-      refetchTree,
+      refreshServerData,
       currentTranscriptionOptions,
       authedFetch,
     ],
   )
-
-  const fetchWorkspaceMembers = useCallback(async () => {
-    if (!wpId) return
-    setMembersLoading(true)
-    try {
-      const data = (await listWorkspaceMembersAction(wpId)) as WorkspaceMemberRow[]
-      setMembers(data)
-    } catch {
-      toast.error('Could not load workspace members.')
-    } finally {
-      setMembersLoading(false)
-    }
-  }, [wpId, authedFetch])
-
-  useEffect(() => {
-    if (!wpId) {
-      setMembers([])
-      return
-    }
-    void fetchWorkspaceMembers()
-  }, [wpId, fetchWorkspaceMembers])
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedInviteQuery(inviteQuery), 300)
@@ -1244,8 +1236,9 @@ export function LibraryPageClient({
       setMemberSearchResults([])
       setInviteUserId('')
       setMembers(nextMembers)
+      refreshServerData()
     },
-    [wpId, inviteRole],
+    [refreshServerData, wpId, inviteRole],
   )
 
   const inviteWorkspaceMemberByEmail = useCallback(
@@ -1307,11 +1300,12 @@ export function LibraryPageClient({
         const nextMembers = (await removeWorkspaceMemberAction(wpId, targetUserId)) as WorkspaceMemberRow[]
         toast.success('Member removed.')
         setMembers(nextMembers)
+        refreshServerData()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not remove member.')
       }
     },
-    [wpId],
+    [refreshServerData, wpId],
   )
 
   const changeMemberRole = useCallback(
@@ -1321,57 +1315,13 @@ export function LibraryPageClient({
         const nextMembers = (await updateWorkspaceMemberRoleAction(wpId, targetUserId, role)) as WorkspaceMemberRow[]
         toast.success('Role updated.')
         setMembers(nextMembers)
+        refreshServerData()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not update role.')
       }
     },
-    [wpId],
+    [refreshServerData, wpId],
   )
-
-  useEffect(() => {
-    if (!wpId) {
-      setTree(null)
-      setBrowseFilter({ mode: 'all' })
-      skipInitialTreeFetchRef.current = false
-      return
-    }
-    if (skipInitialTreeFetchRef.current && tree?.workspace.id === wpId) {
-      skipInitialTreeFetchRef.current = false
-      return
-    }
-    let cancelled = false
-    async function load() {
-      setTreeLoading(true)
-      try {
-        const res = await authedFetch(`/api/workspace-projects/${wpId}/tree`)
-        if (!res.ok) {
-          toast.error('Workspace not found')
-          router.replace('/')
-          return
-        }
-        const data = await res.json()
-        if (cancelled) return
-        const nextMedia = (data.media as (VideoProject & { uploadedAt: string })[]).map(mapApiMedia)
-        setTree({
-          workspace: {
-            ...data.workspace,
-            createdAt: new Date(data.workspace.createdAt),
-          },
-          folders: data.folders,
-          media: mergeLocalQueuedProjects(undefined, nextMedia, queuedUploadsRef.current),
-        })
-      } catch (e) {
-        console.error(e)
-        toast.error('Failed to load workspace.')
-      } finally {
-        if (!cancelled) setTreeLoading(false)
-      }
-    }
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [wpId, router, authedFetch])
 
   // Background polling for stuck/ongoing jobs
   useEffect(() => {
@@ -1386,16 +1336,10 @@ export function LibraryPageClient({
     if (!hasBusy) return
 
     const interval = setInterval(() => {
-      void refetchTree()
+      refreshServerData()
     }, 10000)
     return () => clearInterval(interval)
-  }, [tree, wpId, refetchTree])
-
-  const uploadQueueRef = useRef(createConcurrencyQueue(2))
-  const activeUploadsRef = useRef<Map<string, UploadHandle>>(new Map())
-  const queuedUploadsRef = useRef<
-    Map<string, { cancel: () => void; persisted: boolean; cancelled: boolean }>
-  >(new Map())
+  }, [refreshServerData, tree, wpId])
 
   const addProjectLocally = useCallback(
     (project: VideoProject) => {
@@ -1637,7 +1581,7 @@ export function LibraryPageClient({
             ? 'Upload complete. Preview is ready while the editor MP4 prepares in the background.'
             : 'Upload complete. Preparing the editor MP4 in the background.',
         )
-        void refetchTree()
+        refreshServerData()
       } catch (error) {
         console.error('Upload error:', error)
         const message = error instanceof Error ? error.message : 'Upload failed. Please try again.'
@@ -1684,7 +1628,7 @@ export function LibraryPageClient({
         queuedUploadsRef.current.delete(input.project.id)
       }
     },
-    [authedFetch, refetchTree, removeProjectLocally, updateProjectLocally, wpId],
+    [authedFetch, refreshServerData, removeProjectLocally, updateProjectLocally, wpId],
   )
 
   const queueSingleFile = useCallback(
@@ -1915,12 +1859,13 @@ export function LibraryPageClient({
       try {
         const updated = await moveMediaToFolderAction(mediaId, folderId)
         updateProjectLocally(mediaId, { folderId: updated.folderId })
+        refreshServerData()
         toast.success('Media moved.')
       } catch {
         toast.error('Could not move media.')
       }
     },
-    [updateProjectLocally],
+    [refreshServerData, updateProjectLocally],
   )
 
   const renameMediaProject = useCallback(
@@ -1937,13 +1882,14 @@ export function LibraryPageClient({
             ),
           }
         })
+        refreshServerData()
         toast.success('Project renamed.')
       } catch {
         toast.error('Could not rename.')
         throw new Error('rename failed')
       }
     },
-    [dispatch],
+    [dispatch, refreshServerData],
   )
 
   const deleteMediaProject = useCallback(
@@ -1955,6 +1901,7 @@ export function LibraryPageClient({
           if (!prev) return prev
           return { ...prev, media: prev.media.filter((m) => m.id !== mediaId) }
         })
+        refreshServerData()
         toast.success('Media deleted.')
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Could not delete media.'
@@ -1962,7 +1909,7 @@ export function LibraryPageClient({
         throw new Error(msg)
       }
     },
-    [dispatch],
+    [dispatch, refreshServerData],
   )
 
   const createWorkspace = useCallback(async () => {
@@ -1980,191 +1927,70 @@ export function LibraryPageClient({
       if (!confirm('Delete this folder? Subfolders are removed; files move to library root.')) return
       try {
         await deleteFolderAction(folderId)
-        setTree((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            folders: prev.folders.filter((folder) => folder.id !== folderId),
-            media: prev.media.map((media) =>
-              media.folderId === folderId ? { ...media, folderId: null } : media,
-            ),
-          }
-        })
         setBrowseFilter({ mode: 'all' })
+        refreshServerData()
         toast.success('Folder deleted.')
       } catch {
         toast.error('Could not delete folder.')
       }
     },
-    [],
+    [refreshServerData],
   )
 
   const submitNewFolder = useCallback(async () => {
     if (!wpId || !newFolderName.trim()) return
     try {
-      const folder = await createFolderAction({
+      await createFolderAction({
         workspaceProjectId: wpId,
         parentFolderId: newFolderParentId,
         name: newFolderName.trim(),
       })
-      setTree((prev) => {
-        if (!prev) return prev
-        return { ...prev, folders: [...prev.folders, folder] }
-      })
       setNewFolderName('')
       setFolderDialogOpen(false)
+      refreshServerData()
       toast.success('Folder created.')
     } catch {
       toast.error('Could not create folder.')
     }
-  }, [wpId, newFolderName, newFolderParentId])
+  }, [newFolderName, newFolderParentId, refreshServerData, wpId])
 
   const hasFilter = search.length > 0 || statusFilter !== 'all'
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
-          <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-brand">
-              <Sparkles className="size-4 text-brand-foreground" />
-            </div>
-            <span className="text-base font-bold tracking-tight">TranscriptAI</span>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {/* Desktop actions */}
-            <div className="hidden sm:flex items-center gap-2">
-              {wpId && (
-                <Button variant="ghost" size="sm" onClick={() => router.push('/')}>
-                  <ArrowLeft className="size-4" />
-                  Workspaces
-                </Button>
-              )}
-              <ThemeToggle />
-              <Button variant="outline" size="sm" onClick={createWorkspace}>
-                <FolderPlus className="size-4" />
-                New workspace
-              </Button>
-              {wpId && (
-                <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
-                  <Users className="size-4" />
-                  People
-                </Button>
-              )}
-            </div>
-
-            {/* Mobile actions menu */}
-            <div className="sm:hidden flex items-center gap-2">
-              <ThemeToggle />
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="icon-sm">
-                    <Menu className="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48">
-                  {wpId && (
-                    <>
-                      <DropdownMenuItem onClick={() => router.push('/')}>
-                        <ArrowLeft className="mr-2 size-4" />
-                        Workspaces
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                    </>
-                  )}
-                  <DropdownMenuItem onClick={createWorkspace}>
-                    <FolderPlus className="mr-2 size-4" />
-                    New workspace
-                  </DropdownMenuItem>
-                  {wpId && (
-                    <DropdownMenuItem onClick={() => setShareOpen(true)}>
-                      <Users className="mr-2 size-4" />
-                      People
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-
-            {wpId && (
-              <Button
-                size="sm"
-                className="bg-brand text-brand-foreground hover:bg-brand/90"
-                disabled={viewerLocked}
-                title={viewerLocked ? 'Viewers cannot upload' : undefined}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <UploadCloud className="size-4" />
-                <span className="hidden sm:inline">Upload video</span>
-                <span className="sm:hidden">Upload</span>
-              </Button>
-            )}
-            <Show when="signed-out">
-              <SignInButton />
-              <SignUpButton />
-            </Show>
-            <Show when="signed-in">
-              <UserButton />
-            </Show>
-          </div>
-        </div>
-      </header>
+    <div className="relative flex min-h-screen flex-col bg-background">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[26rem] bg-[radial-gradient(circle_at_top,color-mix(in_oklab,var(--color-brand)_14%,transparent),transparent_62%)]" />
+      <LibraryHeader
+        hasWorkspace={Boolean(wpId)}
+        viewerLocked={viewerLocked}
+        onBack={() => router.push('/')}
+        onCreateWorkspace={() => void createWorkspace()}
+        onOpenPeople={() => setShareOpen(true)}
+        onOpenUpload={() => fileInputRef.current?.click()}
+      />
 
       {!wpId ? (
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 sm:px-6 py-6 sm:py-8">
-          <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-balance">Workspaces</h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Each workspace holds folders and video files. Upload multiple videos and add more than one transcript per
-                file from the editor.
-              </p>
-            </div>
-            <Button className="shrink-0 bg-brand text-brand-foreground hover:bg-brand/90" onClick={createWorkspace}>
-              <FolderPlus className="size-4" />
-              New workspace
-            </Button>
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {workspaces.length === 0 ? (
-              <div className="col-span-full rounded-xl border border-dashed bg-muted/20 py-16 text-center">
-                <p className="text-sm text-muted-foreground">No workspaces yet. Create one to get started.</p>
-              </div>
-            ) : (
-              workspaces.map((w) => (
-                <button
-                  key={w.id}
-                  type="button"
-                  onClick={() => router.push(`/?wp=${w.id}`)}
-                  className="flex flex-col gap-2 rounded-xl border bg-card p-5 text-left transition-colors hover:border-brand/40 hover:bg-muted/30"
-                >
-                  <div className="flex items-center gap-2">
-                    <FolderIcon className="size-5 text-brand" />
-                    <span className="font-semibold">{w.name}</span>
-                  </div>
-                  <span className="text-xs text-muted-foreground">{formatDate(w.createdAt)}</span>
-                </button>
-              ))
-            )}
-          </div>
-        </main>
+        <WorkspaceList
+          workspaces={workspaces}
+          onCreateWorkspace={() => void createWorkspace()}
+          onOpenWorkspace={(workspaceId) => router.push(`/?wp=${workspaceId}`)}
+        />
       ) : (
-        <div className="flex min-h-0 flex-1">
-          <aside className="hidden w-60 shrink-0 border-r bg-muted/15 lg:flex lg:flex-col">
-            <div className="border-b p-3">
+        <div className="relative flex min-h-0 flex-1 px-3 pb-4 sm:px-5">
+          <aside className="hidden w-72 shrink-0 lg:flex lg:flex-col">
+            <div className="sticky top-24 overflow-hidden rounded-[1.8rem] border border-white/60 bg-white/72 shadow-[0_24px_64px_-46px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+            <div className="border-b border-border/60 p-4">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Workspace</p>
-              <p className="mt-0.5 truncate text-sm font-semibold" title={tree?.workspace.name}>
-                {treeLoading ? '…' : tree?.workspace.name}
+              <p className="mt-1 truncate text-lg font-semibold tracking-tight" title={tree?.workspace.name}>
+                {tree?.workspace.name ?? 'Workspace'}
               </p>
             </div>
-            <div className="flex-1 overflow-y-auto p-2">
-              <div className="flex flex-col gap-0.5">
+            <div className="flex-1 overflow-y-auto p-3">
+              <div className="flex flex-col gap-1">
                 <button
                   type="button"
                   className={cn(
-                    'rounded-md px-2 py-2 text-left text-sm',
-                    browseFilter.mode === 'all' ? 'bg-brand/15 font-medium text-brand' : 'hover:bg-muted',
+                    'rounded-xl px-3 py-2.5 text-left text-sm transition-colors',
+                    browseFilter.mode === 'all' ? 'bg-brand/15 font-medium text-brand' : 'hover:bg-muted/70',
                   )}
                   onClick={() => setBrowseFilter({ mode: 'all' })}
                 >
@@ -2173,17 +1999,17 @@ export function LibraryPageClient({
                 <button
                   type="button"
                   className={cn(
-                    'rounded-md px-2 py-2 text-left text-sm',
+                    'rounded-xl px-3 py-2.5 text-left text-sm transition-colors',
                     browseFilter.mode === 'folder' && browseFilter.folderId === null
                       ? 'bg-brand/15 font-medium text-brand'
-                      : 'hover:bg-muted',
+                      : 'hover:bg-muted/70',
                   )}
                   onClick={() => setBrowseFilter({ mode: 'folder', folderId: null })}
                 >
                   Library root
                 </button>
               </div>
-              <div className="mt-2 border-t pt-2">
+              <div className="mt-3 border-t border-border/60 pt-3">
                 <FolderTreeNode
                   folders={tree?.folders ?? []}
                   parentId={null}
@@ -2194,11 +2020,11 @@ export function LibraryPageClient({
                   canEditFolders={!viewerLocked}
                 />
               </div>
-              <div className="mt-3 flex flex-col gap-2 border-t pt-3">
+              <div className="mt-4 flex flex-col gap-2 border-t border-border/60 pt-4">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 w-full justify-start gap-2 text-xs"
+                  className="h-9 w-full justify-start gap-2 rounded-xl border-white/60 bg-background/80 text-xs"
                   disabled={viewerLocked}
                   onClick={() => {
                     setNewFolderParentId(null)
@@ -2213,7 +2039,7 @@ export function LibraryPageClient({
                   <Button
                     variant="secondary"
                     size="sm"
-                    className="h-8 w-full justify-start gap-2 text-xs"
+                    className="h-9 w-full justify-start gap-2 rounded-xl text-xs"
                     disabled={viewerLocked}
                     onClick={() => {
                       setNewFolderParentId(browseFilter.folderId)
@@ -2227,9 +2053,11 @@ export function LibraryPageClient({
                 )}
               </div>
             </div>
+            </div>
           </aside>
           <main className="mx-auto min-h-0 w-full max-w-5xl flex-1 overflow-y-auto px-4 py-6 lg:px-8">
-        <div className="mb-6 lg:hidden flex items-end gap-2">
+        <div className="mb-6 rounded-[1.5rem] border border-white/60 bg-white/72 p-4 shadow-[0_22px_56px_-46px_rgba(0,0,0,0.5)] lg:hidden">
+        <div className="flex items-end gap-2">
           <div className="flex-1">
             <Label className="text-xs text-muted-foreground">Browse</Label>
             <Select
@@ -2265,7 +2093,7 @@ export function LibraryPageClient({
           {!viewerLocked && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" className="shrink-0 mb-px">
+                <Button variant="outline" size="icon" className="mb-px shrink-0 border-white/60 bg-background/80">
                   <FolderPlus className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -2304,289 +2132,89 @@ export function LibraryPageClient({
             </DropdownMenu>
           )}
         </div>
+        </div>
         <div className="mb-8">
-          <h1 className="text-2xl font-bold tracking-tight text-balance">Video Library</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-brand/80">Editorial Workspace</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">Video Library</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
             Upload media, tune transcription options, then start AssemblyAI from each file when you are ready.
           </p>
         </div>
 
-        {/* Upload zone */}
-        <div
-          className={cn(
-            'mb-8 flex flex-col items-center justify-center gap-5 rounded-2xl border-2 border-dashed p-12 text-center transition-all duration-300 ease-out',
-            isDragOver
-              ? 'border-brand bg-brand/10 scale-[1.02] shadow-lg shadow-brand/5'
-              : 'border-border bg-muted/20 hover:border-brand/40 hover:bg-muted/40',
-          )}
+        <LibraryUploadDropzone
+          disabled={viewerLocked}
+          isDragOver={isDragOver}
           onDragOver={(e) => {
             e.preventDefault()
             if (!viewerLocked) setIsDragOver(true)
           }}
           onDragLeave={() => setIsDragOver(false)}
-          onDrop={viewerLocked ? (e) => { e.preventDefault(); setIsDragOver(false) } : onDrop}
-        >
-          <div className={cn(
-            'flex size-16 items-center justify-center rounded-3xl transition-all duration-300 shadow-sm',
-            isDragOver ? 'bg-brand text-brand-foreground shadow-brand/20 scale-110' : 'bg-background border text-muted-foreground',
-          )}>
-            <UploadCloud className={cn('size-8', isDragOver ? 'animate-bounce' : '')} />
-          </div>
-          <div className="space-y-1.5">
-            <p className="text-lg font-semibold tracking-tight">
-              {isDragOver ? 'Drop videos to upload' : 'Drag & drop your videos here'}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              or{' '}
-              <button
-                type="button"
-                className="font-medium text-brand underline-offset-4 hover:underline disabled:pointer-events-none disabled:opacity-50 transition-all"
-                disabled={viewerLocked}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                browse files
-              </button>
-              {' '}&mdash; MP4, MOV, WebM, AVI supported
-            </p>
-          </div>
-          <div className="flex items-center gap-2.5 rounded-full border bg-background/50 px-4 py-2 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur-sm">
-            <Sparkles className="size-3.5 text-brand" />
-            AssemblyAI transcription + AI editing assistant
-          </div>
-        </div>
+          onDrop={
+            viewerLocked
+              ? (e) => {
+                  e.preventDefault()
+                  setIsDragOver(false)
+                }
+              : onDrop
+          }
+          onBrowse={() => fileInputRef.current?.click()}
+        />
 
-        {/* Transcription Settings */}
-        <div className="mb-8">
-          <Accordion type="single" collapsible className="w-full rounded-2xl border bg-card px-6">
-            <AccordionItem value="settings" className="border-0">
-              <AccordionTrigger className="hover:no-underline py-5 text-sm font-semibold">
-                Transcription Settings
-              </AccordionTrigger>
-              <AccordionContent className="pb-6">
-                <p className="mb-4 text-xs text-muted-foreground">
-                  These options apply when you click <span className="font-medium text-foreground">Transcribe</span>{' '}
-                  on a file marked “Needs transcript”.
-                </p>
-                <div className="mb-5 flex flex-col gap-3 rounded-xl border bg-muted/30 p-4 md:flex-row md:items-center md:justify-between">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">Recommended default workflow</p>
-                    <p className="text-xs text-muted-foreground">
-                      Start with the best model, speaker labels on, and leave speaker tuning blank unless you already
-                      know the roster or expected count.
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setSpeechModel(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
-                      setSpeakerLabels(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
-                      setLanguageDetection(DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection)
-                      setTemperature([DEFAULT_TRANSCRIPTION_OPTIONS.temperature])
-                      setKeyterms(DEFAULT_TRANSCRIPTION_OPTIONS.keyterms ?? '')
-                      setCustomPrompt(DEFAULT_TRANSCRIPTION_PROMPT)
-                      setSpeakersExpected('')
-                      setMinSpeakers('')
-                      setMaxSpeakers('')
-                      setKnownSpeakers(DEFAULT_TRANSCRIPTION_OPTIONS.knownSpeakers ?? '')
-                      setRedactPii(DEFAULT_TRANSCRIPTION_OPTIONS.redactPii ?? false)
-                    }}
-                  >
-                    Reset to recommended
-                  </Button>
-                </div>
-                <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
-                  <div className="flex flex-col gap-6">
-                    <div className="flex flex-col gap-3">
-                      <Label>Speech Model</Label>
-                      <Select value={speechModel} onValueChange={setSpeechModel}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="best">Universal-3 Pro (Highest Accuracy)</SelectItem>
-                          <SelectItem value="fast">Universal-2 (Fastest & 99 Languages)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">Universal-3 Pro is best for complex legal terminology.</p>
-                    </div>
-                    
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex flex-col gap-1">
-                        <Label>Speaker Labels (Diarization)</Label>
-                        <p className="text-xs text-muted-foreground">Automatically identify who is speaking.</p>
-                      </div>
-                      <Switch checked={speakerLabels} onCheckedChange={setSpeakerLabels} />
-                    </div>
-
-                    {/* Advanced Speaker Settings Conditional Section */}
-                    {speakerLabels && (
-                      <div className="flex flex-col gap-4 rounded-xl border border-brand/20 bg-brand/5 p-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand">
-                          <Sparkles className="size-3" />
-                          Advanced Speaker Tuning
-                        </div>
-                        <p className="text-[11px] leading-snug text-muted-foreground">
-                          Optional. Leave these blank unless you need to force a specific number of speakers or help the
-                          model map speakers to known names.
-                        </p>
-                        
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="flex flex-col gap-2">
-                            <Label className="text-[11px]">Expected Count</Label>
-                            <Input 
-                              type="number" 
-                              placeholder="e.g. 2" 
-                              value={speakersExpected}
-                              onChange={(e) => {
-                                setSpeakersExpected(e.target.value)
-                                if (e.target.value) { setMinSpeakers(''); setMaxSpeakers(''); }
-                              }}
-                              className="h-8 text-xs"
-                            />
-                          </div>
-                          <div className="flex flex-col gap-2">
-                            <Label className="text-[11px]">Speaker Range</Label>
-                            <div className="flex items-center gap-2">
-                              <Input 
-                                type="number" 
-                                placeholder="Min" 
-                                value={minSpeakers}
-                                onChange={(e) => {
-                                  setMinSpeakers(e.target.value)
-                                  if (e.target.value) setSpeakersExpected('')
-                                }}
-                                className="h-8 text-xs"
-                              />
-                              <Input 
-                                type="number" 
-                                placeholder="Max" 
-                                value={maxSpeakers}
-                                onChange={(e) => {
-                                  setMaxSpeakers(e.target.value)
-                                  if (e.target.value) setSpeakersExpected('')
-                                }}
-                                className="h-8 text-xs"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                          <Label className="text-[11px]">Identified Names (Known Values)</Label>
-                          <Input 
-                            placeholder="John Doe, Jane Smith..." 
-                            value={knownSpeakers}
-                            onChange={(e) => setKnownSpeakers(e.target.value)}
-                            className="h-8 text-xs"
-                          />
-                          <p className="text-[10px] text-muted-foreground leading-tight">
-                            Replace &quot;Speaker A&quot; with these names using Speaker Identification.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex flex-col gap-1">
-                        <Label>Language Detection</Label>
-                        <p className="text-xs text-muted-foreground">Auto-detect the primary language spoken.</p>
-                      </div>
-                      <Switch checked={languageDetection} onCheckedChange={setLanguageDetection} />
-                    </div>
-
-                    <div className="flex flex-col gap-4 pt-2">
-                      <div className="flex items-center justify-between">
-                        <Label>Temperature</Label>
-                        <span className="font-mono text-xs text-brand">{temperature[0]}</span>
-                      </div>
-                      <Slider 
-                        value={temperature} 
-                        onValueChange={setTemperature} 
-                        max={1} 
-                        step={0.1}
-                      />
-                      <p className="text-xs text-muted-foreground">Lower values maximize determinism, higher explores more.</p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-6">
-                    <div className="flex flex-col gap-3">
-                      <Label>Boosted Vocabulary (Keyterms)</Label>
-                      <Textarea 
-                        value={keyterms}
-                        onChange={(e) => setKeyterms(e.target.value)}
-                        className="min-h-[80px] resize-none border-dashed bg-muted/50 font-mono text-[11px]"
-                        placeholder="Anktiva, Glicoside, Ramipril..."
-                      />
-                      <p className="text-xs text-muted-foreground">Comma-separated list of names, brands, or jargon to boost accuracy.</p>
-                    </div>
-
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center justify-between">
-                        <Label>System Prompt Configuration</Label>
-                        <Badge variant="secondary" className="text-[10px] font-normal uppercase tracking-wider">Experimental</Badge>
-                      </div>
-                      <Textarea 
-                        value={customPrompt}
-                        onChange={(e) => setCustomPrompt(e.target.value)}
-                        className="min-h-[260px] resize-none border-dashed bg-muted/50 font-mono text-[11px] leading-relaxed"
-                        placeholder="Enter a custom prompt here..."
-                      />
-                      <p className="text-xs text-muted-foreground leading-snug">
-                        Use authoritative language (Mandatory:, Non-negotiable:) to format transcript style, tell it to preserve filler words, or apply the [unclear] tag to unresolvable audio. Keep empty for default settings.
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col gap-4 rounded-xl border border-blue-200/50 bg-blue-50/30 p-4 dark:border-blue-500/20 dark:bg-blue-900/10 transition-colors">
-                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
-                        <Sparkles className="size-3" />
-                        Security & Privacy
-                      </div>
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex flex-col gap-1">
-                          <Label className="text-xs font-medium">PII Redaction</Label>
-                          <p className="text-[10px] text-muted-foreground leading-tight">
-                            Identify and mask person names, SSNs, phone numbers, and addresses.
-                          </p>
-                        </div>
-                        <Switch checked={redactPii} onCheckedChange={setRedactPii} />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-4 rounded-xl border border-brand/20 bg-brand/5 p-4 transition-colors">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex flex-col gap-1">
-                          <Label className="text-xs font-medium">Auto-transcribe after upload</Label>
-                          <p className="text-[10px] text-muted-foreground leading-tight">
-                            Automatically start transcription using these settings when a new video finishes uploading.
-                          </p>
-                        </div>
-                        <Switch checked={autoTranscribe} onCheckedChange={setAutoTranscribe} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        </div>
+        <TranscriptionSettingsPanel
+          speechModel={speechModel}
+          setSpeechModel={setSpeechModel}
+          speakerLabels={speakerLabels}
+          setSpeakerLabels={setSpeakerLabels}
+          languageDetection={languageDetection}
+          setLanguageDetection={setLanguageDetection}
+          temperature={temperature}
+          setTemperature={setTemperature}
+          keyterms={keyterms}
+          setKeyterms={setKeyterms}
+          customPrompt={customPrompt}
+          setCustomPrompt={setCustomPrompt}
+          speakersExpected={speakersExpected}
+          setSpeakersExpected={setSpeakersExpected}
+          minSpeakers={minSpeakers}
+          setMinSpeakers={setMinSpeakers}
+          maxSpeakers={maxSpeakers}
+          setMaxSpeakers={setMaxSpeakers}
+          knownSpeakers={knownSpeakers}
+          setKnownSpeakers={setKnownSpeakers}
+          redactPii={redactPii}
+          setRedactPii={setRedactPii}
+          autoTranscribe={autoTranscribe}
+          setAutoTranscribe={setAutoTranscribe}
+          onResetRecommended={() => {
+            setSpeechModel(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
+            setSpeakerLabels(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
+            setLanguageDetection(DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection)
+            setTemperature([DEFAULT_TRANSCRIPTION_OPTIONS.temperature])
+            setKeyterms(DEFAULT_TRANSCRIPTION_OPTIONS.keyterms ?? '')
+            setCustomPrompt(DEFAULT_TRANSCRIPTION_PROMPT)
+            setSpeakersExpected('')
+            setMinSpeakers('')
+            setMaxSpeakers('')
+            setKnownSpeakers(DEFAULT_TRANSCRIPTION_OPTIONS.knownSpeakers ?? '')
+            setRedactPii(DEFAULT_TRANSCRIPTION_OPTIONS.redactPii ?? false)
+          }}
+        />
 
         {/* Search & filter */}
-        <div className="mb-6 flex flex-wrap items-center gap-3">
-          <div className="relative flex-1 min-w-48">
+        <div className="mb-6 flex flex-wrap items-center gap-3 rounded-[1.5rem] border border-white/60 bg-white/72 p-4 shadow-[0_22px_56px_-46px_rgba(0,0,0,0.45)]">
+          <div className="relative min-w-48 flex-1">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search projects..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
+              className="border-white/60 bg-background/80 pl-9"
             />
           </div>
           <div className="flex items-center gap-2">
             <Filter className="size-4 text-muted-foreground" />
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-36">
+              <SelectTrigger className="w-40 border-white/60 bg-background/80">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -2640,7 +2268,7 @@ export function LibraryPageClient({
         onChange={onFileChange}
       />
 
-      <Dialog
+      <WorkspacePeopleDialog
         open={shareOpen}
         onOpenChange={(open) => {
           setShareOpen(open)
@@ -2652,212 +2280,25 @@ export function LibraryPageClient({
             setInviteAdvancedOpen(false)
           }
         }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Workspace people</DialogTitle>
-          </DialogHeader>
-          <div className="flex max-h-[min(60vh,480px)] flex-col gap-3 overflow-y-auto py-2">
-            {membersLoading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : members.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No members loaded.</p>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {members.map((m) => {
-                  const label =
-                    m.displayName?.trim() ||
-                    m.email?.trim() ||
-                    m.userId
-                  const subtitle = m.displayName?.trim()
-                    ? m.email?.trim() || m.userId
-                    : m.email?.trim()
-                      ? m.userId
-                      : null
-                  const initials = (m.displayName || m.email || m.userId)
-                    .split(/\s+/)
-                    .map((p) => p[0])
-                    .join('')
-                    .slice(0, 2)
-                    .toUpperCase()
-                  return (
-                    <li
-                      key={m.userId}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2 text-sm"
-                    >
-                      <div className="flex min-w-0 flex-1 items-start gap-2">
-                        <Avatar className="size-8">
-                          {m.imageUrl ? (
-                            <AvatarImage src={m.imageUrl} alt="" />
-                          ) : null}
-                          <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium text-sm" title={m.userId}>
-                            {label}
-                            {user?.id === m.userId ? ' (you)' : ''}
-                          </p>
-                          {subtitle && subtitle !== label ? (
-                            <p
-                              className="truncate font-mono text-[11px] text-muted-foreground"
-                              title={m.userId}
-                            >
-                              {subtitle}
-                            </p>
-                          ) : null}
-                          {isWorkspaceOwner ? (
-                            <Select
-                              value={m.role}
-                              onValueChange={(v) =>
-                                void changeMemberRole(m.userId, v as 'owner' | 'editor' | 'viewer')
-                              }
-                            >
-                              <SelectTrigger className="mt-1 h-8 w-[140px] text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="owner">Owner</SelectItem>
-                                <SelectItem value="editor">Editor</SelectItem>
-                                <SelectItem value="viewer">Viewer</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <span className="mt-1 inline-block text-xs capitalize text-muted-foreground">
-                              {m.role}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {(isWorkspaceOwner || user?.id === m.userId) && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="shrink-0 text-destructive hover:text-destructive"
-                          onClick={() => void removeWorkspaceMember(m.userId)}
-                        >
-                          {user?.id === m.userId ? 'Leave' : 'Remove'}
-                        </Button>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-            {isWorkspaceOwner && (
-              <div className="border-t pt-3">
-                <p className="mb-2 text-xs text-muted-foreground leading-relaxed">
-                  Access is granted instantly in this app for people who already have an account. We do
-                  not send invitation emails—tell them separately if they should sign up or open this
-                  workspace.
-                </p>
-                <Label className="text-xs">Search by email or name</Label>
-                <div className="relative mt-1">
-                  <Input
-                    className="text-sm pr-9"
-                    placeholder="name@example.com"
-                    value={inviteQuery}
-                    onChange={(e) => setInviteQuery(e.target.value)}
-                    autoComplete="off"
-                  />
-                  {memberSearchLoading ? (
-                    <Loader2 className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
-                  ) : null}
-                </div>
-                {memberSearchResults.length > 0 && (
-                  <ul className="mt-2 max-h-40 overflow-y-auto rounded-md border bg-popover text-popover-foreground shadow-sm">
-                    {memberSearchResults.map((hit) => {
-                      const initials = hit.displayName
-                        .split(/\s+/)
-                        .map((p) => p[0])
-                        .join('')
-                        .slice(0, 2)
-                        .toUpperCase()
-                      return (
-                        <li key={hit.id}>
-                          <button
-                            type="button"
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
-                            onClick={() => void inviteWorkspaceMemberFromSearchHit(hit)}
-                          >
-                            <Avatar className="size-7">
-                              {hit.imageUrl ? (
-                                <AvatarImage src={hit.imageUrl} alt="" />
-                              ) : null}
-                              <AvatarFallback className="text-[9px]">{initials}</AvatarFallback>
-                            </Avatar>
-                            <span className="min-w-0 flex-1 truncate">
-                              <span className="font-medium">{hit.displayName}</span>
-                              {hit.email ? (
-                                <span className="block truncate text-xs text-muted-foreground">
-                                  {hit.email}
-                                </span>
-                              ) : null}
-                            </span>
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
-                  <Select
-                    value={inviteRole}
-                    onValueChange={(v) => setInviteRole(v as 'editor' | 'viewer')}
-                  >
-                    <SelectTrigger className="w-full sm:w-[120px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="editor">Editor</SelectItem>
-                      <SelectItem value="viewer">Viewer</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button type="button" size="sm" onClick={() => void inviteWorkspaceMemberFromField()}>
-                    Add by email
-                  </Button>
-                </div>
-                <Collapsible open={inviteAdvancedOpen} onOpenChange={setInviteAdvancedOpen}>
-                  <CollapsibleTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="mt-2 h-8 gap-1 px-0 text-xs text-muted-foreground"
-                    >
-                      <ChevronDown
-                        className={cn('size-3.5 transition-transform', inviteAdvancedOpen && 'rotate-180')}
-                      />
-                      Advanced: Clerk user ID
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="pt-2">
-                    <p className="mb-2 text-[11px] text-muted-foreground">
-                      From Clerk Dashboard → Users, if you need to add by raw ID.
-                    </p>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                      <Input
-                        className="font-mono text-xs"
-                        placeholder="user_…"
-                        value={inviteUserId}
-                        onChange={(e) => setInviteUserId(e.target.value)}
-                      />
-                      <Button type="button" size="sm" onClick={() => void inviteWorkspaceMemberByUserId()}>
-                        Add
-                      </Button>
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShareOpen(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        members={members}
+        currentUserId={user?.id}
+        isWorkspaceOwner={isWorkspaceOwner}
+        inviteQuery={inviteQuery}
+        setInviteQuery={setInviteQuery}
+        memberSearchLoading={memberSearchLoading}
+        memberSearchResults={memberSearchResults}
+        inviteRole={inviteRole}
+        setInviteRole={setInviteRole}
+        inviteAdvancedOpen={inviteAdvancedOpen}
+        setInviteAdvancedOpen={setInviteAdvancedOpen}
+        inviteUserId={inviteUserId}
+        setInviteUserId={setInviteUserId}
+        onInviteFromSearch={(hit) => void inviteWorkspaceMemberFromSearchHit(hit)}
+        onInviteByEmail={() => void inviteWorkspaceMemberFromField()}
+        onInviteByUserId={() => void inviteWorkspaceMemberByUserId()}
+        onChangeMemberRole={(memberUserId, role) => void changeMemberRole(memberUserId, role)}
+        onRemoveMember={(memberUserId) => void removeWorkspaceMember(memberUserId)}
+      />
 
       <Dialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen}>
         <DialogContent className="sm:max-w-md">

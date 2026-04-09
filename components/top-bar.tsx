@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
@@ -61,7 +61,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useAuthedFetch } from '@/lib/authed-fetch'
 import { useApp } from '@/lib/app-context'
-import { getProjectData, listTranscriptsForMediaAction, renameProjectAction } from '@/lib/actions'
+import { renameProjectAction } from '@/lib/actions'
 import { preferredDurationMs, resolutionLabel } from '@/lib/media-metadata'
 import { runTranscriptionFlow } from '@/lib/transcription-client'
 import { DEFAULT_TRANSCRIPTION_OPTIONS } from '@/lib/transcription-options'
@@ -259,7 +259,7 @@ export function TopBar({
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState('')
   const [transcriptList, setTranscriptList] = useState<TranscriptSummary[]>(initialTranscriptList)
-  const [listLoading, setListLoading] = useState(false)
+  const [switchingTranscriptId, setSwitchingTranscriptId] = useState<string | null>(null)
   const [newDialogOpen, setNewDialogOpen] = useState(false)
   const [newLabel, setNewLabel] = useState('')
   const [startingTranscribe, setStartingTranscribe] = useState(false)
@@ -269,35 +269,14 @@ export function TopBar({
   const [rerunLanguageDetection, setRerunLanguageDetection] = useState(
     DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection,
   )
-  const transcriptListBootstrappedRef = useRef(true)
 
   const project = state.projects.find((p) => p.id === state.activeProjectId)
   const mediaId = project?.id
 
   useEffect(() => {
-    if (!mediaId) return
-    if (transcriptListBootstrappedRef.current) {
-      transcriptListBootstrappedRef.current = false
-      return
-    }
-    const safeId = mediaId
-    let cancelled = false
-    async function load() {
-      setListLoading(true)
-      try {
-        const rows = await listTranscriptsForMediaAction(safeId)
-        if (!cancelled) setTranscriptList(rows)
-      } catch {
-        if (!cancelled) setTranscriptList([])
-      } finally {
-        if (!cancelled) setListLoading(false)
-      }
-    }
-    void load()
-    return () => {
-      cancelled = true
-    }
-  }, [mediaId])
+    setTranscriptList(initialTranscriptList)
+    setSwitchingTranscriptId(null)
+  }, [initialTranscriptList])
 
   useEffect(() => {
     if (!newDialogOpen) {
@@ -308,23 +287,15 @@ export function TopBar({
     }
   }, [newDialogOpen])
 
+  const selectValue = state.transcript?.id ?? searchParams.get('t') ?? ''
+
   const switchTranscript = useCallback(
     async (transcriptId: string) => {
-      if (!mediaId) return
-      try {
-        const data = await getProjectData(mediaId, transcriptId)
-        if (!data) {
-          toast.error('Transcript not found.')
-          return
-        }
-        dispatch({ type: 'SET_TRANSCRIPT', transcript: data.transcript })
-        dispatch({ type: 'SET_OVERLAYS', overlays: data.overlays ?? [] })
-        router.replace(`/editor/${mediaId}?t=${transcriptId}`)
-      } catch {
-        toast.error('Failed to load transcript.')
-      }
+      if (!mediaId || transcriptId === selectValue) return
+      setSwitchingTranscriptId(transcriptId)
+      router.replace(`/editor/${mediaId}?t=${transcriptId}`)
     },
-    [dispatch, mediaId, router],
+    [mediaId, router, selectValue],
   )
 
   const startNewTranscription = useCallback(async () => {
@@ -355,8 +326,11 @@ export function TopBar({
       })
 
       if (result.ok) {
-        setTranscriptList(await listTranscriptsForMediaAction(mediaId))
-        await switchTranscript(result.transcriptId)
+        setNewDialogOpen(false)
+        setNewLabel('')
+        setSwitchingTranscriptId(result.transcriptId)
+        router.replace(`/editor/${mediaId}?t=${result.transcriptId}`)
+        router.refresh()
         toast.success('New transcript ready.')
       } else if (result.reason === 'error' || result.reason === 'start_error') {
         toast.error('Transcription did not complete', { description: result.message, duration: 10_000 })
@@ -371,8 +345,6 @@ export function TopBar({
         toast.message('Transcription check stopped')
         return
       }
-      setNewDialogOpen(false)
-      setNewLabel('')
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Transcription failed.'
       toast.error('Transcription failed', { description: msg, duration: 10_000 })
@@ -387,11 +359,9 @@ export function TopBar({
     rerunLanguageDetection,
     rerunSpeakerLabels,
     rerunSpeechModel,
-    switchTranscript,
+    router,
     authedFetch,
   ])
-
-  const selectValue = state.transcript?.id ?? searchParams.get('t') ?? ''
 
   if (!project) return null
 
@@ -566,7 +536,7 @@ export function TopBar({
         </div>
 
         <div className="hidden shrink-0 items-center gap-2 sm:flex">
-          {listLoading ? (
+          {switchingTranscriptId ? (
             <Loader2 className="size-4 animate-spin text-muted-foreground" />
           ) : (
             <Select
