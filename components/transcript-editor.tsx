@@ -14,10 +14,14 @@ import {
   Users,
   Crosshair,
   FilterX,
+  FileText,
+  Search,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Progress } from '@/components/ui/progress'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   Dialog,
@@ -27,7 +31,31 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { ButtonGroup } from '@/components/ui/button-group'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldSet,
+} from '@/components/ui/field'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
+import { Kbd } from '@/components/ui/kbd'
+import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import { useApp } from '@/lib/app-context'
 import type { TranscriptSegment } from '@/lib/types'
@@ -61,13 +89,16 @@ function formatTime(ms: number): string {
 
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round(value * 100)
-  const color = pct >= 90 ? 'bg-green-500' : pct >= 75 ? 'bg-yellow-500' : 'bg-red-500'
+  const indicatorClass =
+    pct >= 90
+      ? '[&_[data-slot=progress-indicator]]:bg-green-500'
+      : pct >= 75
+        ? '[&_[data-slot=progress-indicator]]:bg-yellow-500'
+        : '[&_[data-slot=progress-indicator]]:bg-red-500'
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted/50">
-          <div className={cn('h-full rounded-full transition-all duration-500', color)} style={{ width: `${pct}%` }} />
-        </div>
+        <Progress value={pct} className={cn('mt-1.5 h-1.5 flex-1 bg-muted/60', indicatorClass)} />
       </TooltipTrigger>
       <TooltipContent>{pct}% confidence</TooltipContent>
     </Tooltip>
@@ -79,36 +110,36 @@ function SaveStateBadge({ state }: { state: SegmentSaveState }) {
 
   if (state === 'saving') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+      <Badge variant="outline" className="rounded-full px-2 py-0 text-[10px] text-muted-foreground">
         <Loader2 className="size-3 animate-spin" />
         Saving
-      </span>
+      </Badge>
     )
   }
 
   if (state === 'saved') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-green-500/30 px-1.5 py-0.5 text-[10px] text-green-500">
+      <Badge variant="outline" className="rounded-full border-green-500/30 px-2 py-0 text-[10px] text-green-500">
         <CheckCircle2 className="size-3" />
         Saved
-      </span>
+      </Badge>
     )
   }
 
   if (state === 'error') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-destructive/30 px-1.5 py-0.5 text-[10px] text-destructive">
+      <Badge variant="outline" className="rounded-full border-destructive/30 px-2 py-0 text-[10px] text-destructive">
         <AlertCircle className="size-3" />
         Error
-      </span>
+      </Badge>
     )
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-500">
+    <Badge variant="outline" className="rounded-full border-amber-500/30 px-2 py-0 text-[10px] text-amber-600 dark:text-amber-500">
       <Loader2 className="size-3" />
       Unsaved
-    </span>
+    </Badge>
   )
 }
 
@@ -139,41 +170,52 @@ function SpeakerManagerDialog({
         <DialogHeader>
           <DialogTitle>Manage speakers</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-            Pick a speaker, rename them once, and every matching segment will update together.
-          </div>
-          <div className="space-y-2">
-            <Label>Current speakers</Label>
-            <div className="flex flex-wrap gap-2">
-              {speakers.map((speaker) => (
-                <button
-                  key={speaker.name}
-                  type="button"
-                  onClick={() => onSelectSpeaker(speaker.name)}
-                  className={cn(
-                    'rounded-full border px-2 py-1 text-xs transition-colors',
-                    selectedSpeaker === speaker.name
-                      ? 'border-brand bg-brand/10 text-brand'
-                      : 'border-border bg-muted/40 text-foreground hover:border-brand/40',
-                    getSpeakerColorClass(speaker.name),
-                  )}
-                >
-                  {speaker.name} ({speaker.count})
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="speaker-rename-input">Rename selected speaker across transcript</Label>
-            <Input
-              id="speaker-rename-input"
-              value={renameValue}
-              onChange={(e) => onRenameValueChange(e.target.value)}
-              placeholder="Enter the new speaker name"
-            />
-          </div>
-        </div>
+        <FieldSet>
+          <Card className="gap-0 border-border/60 bg-muted/30 py-0 shadow-none">
+            <CardContent className="px-4 py-3 text-xs text-muted-foreground">
+              Pick a speaker, rename them once, and every matching segment will update together.
+            </CardContent>
+          </Card>
+          <FieldGroup>
+            <Field>
+              <FieldLabel>Current speakers</FieldLabel>
+              <FieldContent>
+                <div className="flex flex-wrap gap-2">
+                  {speakers.map((speaker) => (
+                    <button
+                      key={speaker.name}
+                      type="button"
+                      onClick={() => onSelectSpeaker(speaker.name)}
+                      className={cn(
+                        'rounded-full border px-2.5 py-1 text-xs transition-colors',
+                        selectedSpeaker === speaker.name
+                          ? 'border-brand bg-brand/10 text-brand'
+                          : 'border-border bg-muted/40 text-foreground hover:border-brand/40',
+                        getSpeakerColorClass(speaker.name),
+                      )}
+                    >
+                      {speaker.name} ({speaker.count})
+                    </button>
+                  ))}
+                </div>
+              </FieldContent>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="speaker-rename-input">Rename selected speaker across transcript</FieldLabel>
+              <FieldContent>
+                <Input
+                  id="speaker-rename-input"
+                  value={renameValue}
+                  onChange={(e) => onRenameValueChange(e.target.value)}
+                  placeholder="Enter the new speaker name"
+                />
+                <FieldDescription>
+                  Every segment assigned to the selected speaker will be updated in one action.
+                </FieldDescription>
+              </FieldContent>
+            </Field>
+          </FieldGroup>
+        </FieldSet>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
             Cancel
@@ -348,161 +390,180 @@ function SegmentRow({
 
   return (
     <div ref={rowRef}>
-      <div
+      <Card
         className={cn(
-          'relative rounded-lg border p-3 transition-all duration-150',
+          'relative gap-0 overflow-hidden border p-0 transition-all duration-150 shadow-none',
           isActive
             ? 'border-brand/50 bg-brand/5 shadow-sm shadow-brand/10'
-            : 'border-transparent bg-muted/30 hover:border-border hover:bg-muted/50',
+            : 'border-border/50 bg-muted/20 hover:border-border hover:bg-muted/40',
         )}
       >
         {isActive && <div className="absolute left-0 top-2 h-[calc(100%-16px)] w-0.5 rounded-full bg-brand" />}
 
-        <div className="mb-2 flex flex-wrap items-center gap-2 pl-2">
-          <button
-            type="button"
-            onClick={() => onSeek(segment.start)}
-            className="shrink-0 rounded px-1 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-brand/10 hover:text-brand"
-            title="Seek to start"
-          >
-            {formatTime(segment.start)}
-          </button>
-          <span className="text-[10px] text-muted-foreground/40">–</span>
-          <button
-            type="button"
-            onClick={() => onSeek(segment.end)}
-            className="shrink-0 rounded px-1 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-brand/10 hover:text-brand"
-            title="Seek to end"
-          >
-            {formatTime(segment.end)}
-          </button>
+        <CardContent className="space-y-3 px-4 py-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onSeek(segment.start)}
+              className="shrink-0 rounded px-1 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-brand/10 hover:text-brand"
+              title="Seek to start"
+            >
+              {formatTime(segment.start)}
+            </button>
+            <span className="text-[10px] text-muted-foreground/40">–</span>
+            <button
+              type="button"
+              onClick={() => onSeek(segment.end)}
+              className="shrink-0 rounded px-1 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-brand/10 hover:text-brand"
+              title="Seek to end"
+            >
+              {formatTime(segment.end)}
+            </button>
 
-          {editingSpeaker ? (
-            <Input
-              autoFocus
-              value={speakerValue}
-              onChange={(e) => setSpeakerValue(e.target.value)}
-              onBlur={() => void commitSpeaker()}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  void commitSpeaker()
-                }
-                if (e.key === 'Escape') {
-                  setSpeakerValue(segment.speaker)
-                  setEditingSpeaker(false)
-                }
-              }}
-              className="h-7 w-32 border-brand bg-background px-1.5 font-mono text-xs ring-1 ring-brand/30"
-            />
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setSpeakerValue(segment.speaker)
-                  setEditingSpeaker(true)
+            {editingSpeaker ? (
+              <Input
+                autoFocus
+                value={speakerValue}
+                onChange={(e) => setSpeakerValue(e.target.value)}
+                onBlur={() => void commitSpeaker()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void commitSpeaker()
+                  }
+                  if (e.key === 'Escape') {
+                    setSpeakerValue(segment.speaker)
+                    setEditingSpeaker(false)
+                  }
                 }}
-                className={cn(
-                  'rounded border px-1.5 py-0.5 font-mono text-xs transition-opacity hover:opacity-80',
-                  getSpeakerColorClass(segment.speaker),
-                )}
-                title="Click to rename this segment speaker"
-              >
-                {segment.speaker}
-              </button>
-              <button
-                type="button"
-                onClick={() => onManageSpeaker(segment.speaker)}
-                className="rounded px-1 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                title="Rename this speaker across the whole transcript"
-              >
-                all
-              </button>
-            </>
-          )}
-
-          <SaveStateBadge state={saveState} />
-
-          <div className="ml-auto flex items-center gap-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon-sm" onClick={handleCopy} className="size-8 rounded-full" aria-label="Copy segment">
-                  <Copy className="size-3" />
+                className="h-7 w-32 border-brand bg-background px-1.5 font-mono text-xs ring-1 ring-brand/30"
+              />
+            ) : (
+              <>
+                <Badge
+                  asChild
+                  variant="outline"
+                  className={cn(
+                    'cursor-pointer rounded-full px-2.5 py-0.5 font-mono text-xs transition-opacity hover:opacity-80',
+                    getSpeakerColorClass(segment.speaker),
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSpeakerValue(segment.speaker)
+                      setEditingSpeaker(true)
+                    }}
+                    title="Click to rename this segment speaker"
+                  >
+                    {segment.speaker}
+                  </button>
+                </Badge>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onManageSpeaker(segment.speaker)}
+                  className="h-7 rounded-full px-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground"
+                  title="Rename this speaker across the whole transcript"
+                >
+                  all
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent>Copy segment</TooltipContent>
-            </Tooltip>
-
-            {previousMergeId && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => onMerge(previousMergeId, segment.id)} className="size-8 rounded-full" aria-label="Merge with previous segment">
-                    <Merge className="size-3 rotate-180" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Merge with previous</TooltipContent>
-              </Tooltip>
+              </>
             )}
 
-            {nextMergeId && (
+            <SaveStateBadge state={saveState} />
+
+            <div className="ml-auto flex items-center gap-1">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => onMerge(segment.id, nextMergeId)} className="size-8 rounded-full" aria-label="Merge with next segment">
-                    <Merge className="size-3" />
+                  <Button variant="ghost" size="icon-sm" onClick={handleCopy} className="size-8 rounded-full" aria-label="Copy segment">
+                    <Copy className="size-3" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Merge with next</TooltipContent>
+                <TooltipContent>Copy segment</TooltipContent>
               </Tooltip>
-            )}
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => onSplit(segment, textareaRef.current?.selectionStart ?? Math.floor(draftText.length / 2))}
-                  className="size-8 rounded-full"
-                  aria-label="Split segment at cursor"
-                >
-                  <Scissors className="size-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Split at cursor</TooltipContent>
-            </Tooltip>
+              {previousMergeId && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" onClick={() => onMerge(previousMergeId, segment.id)} className="size-8 rounded-full" aria-label="Merge with previous segment">
+                      <Merge className="size-3 rotate-180" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Merge with previous</TooltipContent>
+                </Tooltip>
+              )}
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => onDelete(segment.id)}
-                  className="size-8 rounded-full hover:bg-destructive/10 hover:text-destructive"
-                  aria-label="Delete segment"
-                >
-                  <Trash2 className="size-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Delete segment</TooltipContent>
-            </Tooltip>
+              {nextMergeId && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" onClick={() => onMerge(segment.id, nextMergeId)} className="size-8 rounded-full" aria-label="Merge with next segment">
+                      <Merge className="size-3" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Merge with next</TooltipContent>
+                </Tooltip>
+              )}
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => onSplit(segment, textareaRef.current?.selectionStart ?? Math.floor(draftText.length / 2))}
+                    className="size-8 rounded-full"
+                    aria-label="Split segment at cursor"
+                  >
+                    <Scissors className="size-3" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Split at cursor</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => onDelete(segment.id)}
+                    className="size-8 rounded-full hover:bg-destructive/10 hover:text-destructive"
+                    aria-label="Delete segment"
+                  >
+                    <Trash2 className="size-3" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Delete segment</TooltipContent>
+              </Tooltip>
+            </div>
           </div>
-        </div>
 
-        <Textarea
-          ref={textareaRef}
-          value={draftText}
-          onChange={(e) => scheduleTextSave(e.target.value)}
-          onBlur={() => void flushTextSave(draftTextRef.current)}
-          rows={Math.max(2, Math.ceil(Math.max(draftText.length, 1) / 65))}
-          className="min-h-0 w-full resize-none border-transparent bg-transparent px-2 py-1 font-sans text-[13px] leading-relaxed text-foreground shadow-none focus-visible:border-brand/20 focus-visible:ring-0 focus-visible:bg-background/70"
-          placeholder="Transcript text..."
-        />
+          <Textarea
+            ref={textareaRef}
+            value={draftText}
+            onChange={(e) => scheduleTextSave(e.target.value)}
+            onBlur={() => void flushTextSave(draftTextRef.current)}
+            rows={Math.max(2, Math.ceil(Math.max(draftText.length, 1) / 65))}
+            className="min-h-0 w-full resize-none border-transparent bg-transparent px-0 py-0 font-sans text-[13px] leading-relaxed text-foreground shadow-none focus-visible:border-brand/20 focus-visible:ring-0 focus-visible:bg-transparent"
+            placeholder="Transcript text..."
+          />
 
-        <div className="flex items-center justify-between gap-2 pl-2">
-          <ConfidenceBar value={segment.confidence} />
-          <p className="text-[10px] text-muted-foreground">Use `Alt+Space`, `Alt+J`, or `Alt+L` while typing.</p>
-        </div>
-      </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <ConfidenceBar value={segment.confidence} />
+              <Badge variant="outline" className="rounded-full px-2 py-0 text-[10px] font-mono text-muted-foreground">
+                {Math.round(segment.confidence * 100)}% conf
+              </Badge>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+              <span>Shortcuts</span>
+              <Kbd>Alt+Space</Kbd>
+              <Kbd>Alt+J</Kbd>
+              <Kbd>Alt+L</Kbd>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="flex items-center justify-center py-1">
         <button
@@ -830,123 +891,158 @@ export function TranscriptEditor() {
 
   if (!transcript) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        No transcript available.
+      <div className="flex h-full items-center justify-center p-6">
+        <Empty className="max-w-lg border-border/60 bg-muted/10">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FileText className="size-5" />
+            </EmptyMedia>
+            <EmptyTitle>No transcript available</EmptyTitle>
+            <EmptyDescription>Import or generate a transcript to start editing timed dialogue and speaker labels.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       </div>
     )
   }
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 flex-col gap-3 border-b border-border/60 bg-background/80 px-4 py-3">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-center">
-          <div className="relative min-w-0">
-            <Input
-              type="search"
-              placeholder="Search transcript or speakers..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="h-10 rounded-full bg-background pl-4 pr-8 text-sm"
-            />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-sm opacity-50 hover:opacity-100"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-              </button>
-            )}
-          </div>
-          <Badge variant="outline" className="h-9 w-fit rounded-full px-3 font-mono text-xs text-muted-foreground">
-            {filtered.length} / {transcript.segments.length}
-          </Badge>
-          <div className="min-w-[7rem] text-left text-xs lg:text-right">
-            {errorCount > 0 ? (
-              <span className="text-destructive">{errorCount} errors</span>
-            ) : pendingChanges > 0 ? (
-              <span className="text-muted-foreground">{pendingChanges} pending</span>
-            ) : (
-              <span className="text-green-500">All saved</span>
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {activeSegmentId && (
-            <Button variant="outline" size="sm" onClick={jumpToActive} className="h-9 gap-1 rounded-full px-3 text-xs">
-              <Crosshair className="size-3.5" />
-              Jump to active
-            </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={handleExportClipboard} className="h-9 gap-1 rounded-full px-3 text-xs">
-            <Copy className="size-3" />
-            Copy all
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const firstSpeaker = speakerSummary[0]?.name ?? ''
-              setSelectedSpeaker((current) => current || firstSpeaker)
-              setSpeakerRenameValue((current) => current || firstSpeaker)
-              setSpeakerDialogOpen(true)
-            }}
-            className="h-9 gap-1 rounded-full px-3 text-xs"
-          >
-            <Users className="size-3.5" />
-            Manage speakers
-          </Button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-medium">Speakers</span>
-          <button
-            type="button"
-            onClick={() => {
-              setSearchTerm('')
-              setSpeakerFilter(null)
-            }}
-            className={cn(
-              'rounded-full border px-3 py-1 transition-colors',
-              !searchTerm && !speakerFilter
-                ? 'border-brand bg-brand/10 text-brand'
-                : 'border-border hover:border-brand/40 hover:text-foreground',
-            )}
-          >
-            All segments
-          </button>
-          {speakerSummary.map((speaker) => (
-            <button
-              key={speaker.name}
-              type="button"
-              onClick={() => {
-                setSpeakerFilter((current) => (current === speaker.name ? null : speaker.name))
-              }}
-              className={cn(
-                'rounded-full border px-3 py-1 transition-colors',
-                getSpeakerColorClass(speaker.name),
-                speakerFilter === speaker.name && 'ring-1 ring-brand/60',
+      <Card className="m-4 mb-0 shrink-0 gap-0 border-border/60 bg-background/70 py-0 shadow-none">
+        <CardHeader className="gap-3 px-4 py-4">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-center">
+            <div className="min-w-0">
+              <InputGroup className="h-10 rounded-full bg-background">
+                <InputGroupAddon align="inline-start" className="pl-4 pr-1">
+                  <Search className="size-4" />
+                </InputGroupAddon>
+                <InputGroupInput
+                  type="search"
+                  placeholder="Search transcript or speakers..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pr-1 text-sm"
+                />
+                {searchTerm && (
+                  <InputGroupAddon align="inline-end" className="pr-2">
+                    <InputGroupButton
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => setSearchTerm('')}
+                      aria-label="Clear transcript search"
+                    >
+                      <X className="size-3" />
+                    </InputGroupButton>
+                  </InputGroupAddon>
+                )}
+              </InputGroup>
+            </div>
+            <Badge variant="outline" className="h-9 w-fit rounded-full px-3 font-mono text-xs text-muted-foreground">
+              {filtered.length} / {transcript.segments.length}
+            </Badge>
+            <div className="min-w-[7rem] text-left text-xs lg:text-right">
+              {errorCount > 0 ? (
+                <Badge variant="outline" className="rounded-full border-destructive/30 px-3 text-destructive">
+                  {errorCount} errors
+                </Badge>
+              ) : pendingChanges > 0 ? (
+                <Badge variant="outline" className="rounded-full px-3 text-muted-foreground">
+                  {pendingChanges} pending
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="rounded-full border-green-500/30 px-3 text-green-500">
+                  All saved
+                </Badge>
               )}
-            >
-              {speaker.name} ({speaker.count})
-            </button>
-          ))}
-          {(searchTerm || speakerFilter) && (
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <ButtonGroup className="flex-wrap">
+              {activeSegmentId && (
+                <Button variant="outline" size="sm" onClick={jumpToActive} className="h-9 gap-1 rounded-full px-3 text-xs">
+                  <Crosshair className="size-3.5" />
+                  Jump to active
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={handleExportClipboard} className="h-9 gap-1 rounded-full px-3 text-xs">
+                <Copy className="size-3" />
+                Copy all
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const firstSpeaker = speakerSummary[0]?.name ?? ''
+                  setSelectedSpeaker((current) => current || firstSpeaker)
+                  setSpeakerRenameValue((current) => current || firstSpeaker)
+                  setSpeakerDialogOpen(true)
+                }}
+                className="h-9 gap-1 rounded-full px-3 text-xs"
+              >
+                <Users className="size-3.5" />
+                Manage speakers
+              </Button>
+            </ButtonGroup>
+            <Badge variant="secondary" className="rounded-full px-3 text-[11px] uppercase tracking-[0.16em]">
+              Transcript workspace
+            </Badge>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="secondary" className="rounded-full px-3 text-[11px]">
+              Speakers
+            </Badge>
             <button
               type="button"
               onClick={() => {
                 setSearchTerm('')
                 setSpeakerFilter(null)
               }}
-              className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 hover:border-brand/40 hover:text-foreground"
+              className={cn(
+                'rounded-full border px-3 py-1 transition-colors',
+                !searchTerm && !speakerFilter
+                  ? 'border-brand bg-brand/10 text-brand'
+                  : 'border-border hover:border-brand/40 hover:text-foreground',
+              )}
             >
-              <FilterX className="size-3" />
-              Clear filters
+              All segments
             </button>
-          )}
-        </div>
-      </div>
+            {speakerSummary.map((speaker) => (
+              <button
+                key={speaker.name}
+                type="button"
+                onClick={() => {
+                  setSpeakerFilter((current) => (current === speaker.name ? null : speaker.name))
+                }}
+                className={cn(
+                  'rounded-full border px-3 py-1 transition-colors',
+                  getSpeakerColorClass(speaker.name),
+                  speakerFilter === speaker.name && 'ring-1 ring-brand/60',
+                )}
+              >
+                {speaker.name} ({speaker.count})
+              </button>
+            ))}
+            {(searchTerm || speakerFilter) && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearchTerm('')
+                  setSpeakerFilter(null)
+                }}
+                className="h-7 rounded-full border border-border px-3 text-xs"
+              >
+                <FilterX className="size-3" />
+                Clear filters
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+      </Card>
 
       <ScrollArea className="flex-1">
         <div className="space-y-1 p-4">
@@ -980,8 +1076,14 @@ export function TranscriptEditor() {
             )
           })}
           {filtered.length === 0 && (
-            <div className="flex flex-col items-center gap-3 py-10 text-center">
-              <p className="text-sm text-muted-foreground">No segments match the current search or speaker filter.</p>
+            <Empty className="border-border/60 bg-muted/10">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <FilterX className="size-5" />
+                </EmptyMedia>
+                <EmptyTitle>No matching segments</EmptyTitle>
+                <EmptyDescription>Adjust the text search or speaker filter to bring transcript rows back into view.</EmptyDescription>
+              </EmptyHeader>
               <div className="flex gap-2">
                 {searchTerm && (
                   <Button variant="outline" size="sm" onClick={() => setSearchTerm('')}>
@@ -994,7 +1096,7 @@ export function TranscriptEditor() {
                   </Button>
                 )}
               </div>
-            </div>
+            </Empty>
           )}
         </div>
       </ScrollArea>

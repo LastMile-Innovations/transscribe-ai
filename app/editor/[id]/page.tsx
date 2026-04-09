@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import EditorPageClient from '@/components/editor-page-client'
+import { TopBar } from '@/components/top-bar'
 import { AppProvider } from '@/lib/app-context'
 import { getProjectData, listTranscriptsForMediaAction } from '@/lib/actions'
 
@@ -36,7 +37,8 @@ export default async function EditorPage({
         overlays: data.overlays ?? [],
       }}
     >
-      <EditorPageClient projectId={id} initialTranscriptList={transcriptList} />
+      <TopBar project={data.project} initialTranscriptList={transcriptList} />
+      <EditorPageClient projectId={id} />
     </AppProvider>
   )
 }

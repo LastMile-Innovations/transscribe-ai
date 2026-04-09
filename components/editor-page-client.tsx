@@ -3,21 +3,30 @@
 import { useEffect } from 'react'
 import { useState } from 'react'
 import { Bot, Sparkles } from 'lucide-react'
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from '@/components/ui/resizable'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
-import { TopBar } from '@/components/top-bar'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
 import { VideoPlayer } from '@/components/video-player'
 import { EditorTabs } from '@/components/editor-tabs'
 import { AIAssistant } from '@/components/ai-assistant'
 import { Button } from '@/components/ui/button'
 import { useApp } from '@/lib/app-context'
-import type { TranscriptSummary } from '@/lib/types'
 
 export default function EditorPageClient({
   projectId,
-  initialTranscriptList,
 }: {
   projectId: string
-  initialTranscriptList: TranscriptSummary[]
 }) {
   const { state, dispatch } = useApp()
   const [aiOpen, setAiOpen] = useState(false)
@@ -58,6 +67,12 @@ export default function EditorPageClient({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [state.isPlaying, state.playerTime, project?.duration, dispatch])
 
+  useEffect(() => {
+    const handleOpenAi = () => setAiOpen(true)
+    window.addEventListener('editor:open-ai', handleOpenAi)
+    return () => window.removeEventListener('editor:open-ai', handleOpenAi)
+  }, [])
+
   if (!project)
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -67,53 +82,103 @@ export default function EditorPageClient({
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <TopBar onOpenAi={() => setAiOpen(true)} initialTranscriptList={initialTranscriptList} />
+      <div className="flex-1 overflow-hidden p-3 md:p-4">
+        <div className="hidden h-full lg:block">
+          <ResizablePanelGroup orientation="horizontal" className="gap-4">
+            <ResizablePanel defaultSize={72} minSize={56}>
+              <Card className="flex h-full min-h-0 flex-col overflow-hidden border-border/70 bg-background/90 py-0 shadow-[0_18px_70px_-36px_rgba(0,0,0,0.45)]">
+                <CardHeader className="gap-4 px-5 py-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                        Active Edit
+                      </p>
+                      <CardTitle className="mt-2 text-base">
+                        Playback, transcript, overlays, and trim stay coordinated while you work.
+                      </CardTitle>
+                      <CardDescription className="mt-1 max-w-2xl">
+                        Built as a production-style editorial console with persistent media context and faster access to cleanup tools.
+                      </CardDescription>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 lg:hidden"
+                      onClick={() => setAiOpen(true)}
+                    >
+                      <Bot className="size-4" />
+                      Assistant
+                    </Button>
+                  </div>
+                </CardHeader>
+                <Separator />
+                <CardContent className="grid min-h-0 flex-1 grid-rows-[minmax(19rem,39vh)_minmax(0,1fr)] px-0 py-0 xl:grid-rows-[minmax(21rem,42vh)_minmax(0,1fr)]">
+                  <div className="min-h-0 bg-card/30 px-4 py-4">
+                    <Card className="h-full min-h-0 overflow-hidden border-border/60 bg-background/60 py-0 shadow-none">
+                      <VideoPlayer />
+                    </Card>
+                  </div>
+                  <div className="min-h-0 px-4 pb-4">
+                    <EditorTabs />
+                  </div>
+                </CardContent>
+              </Card>
+            </ResizablePanel>
 
-      <div className="flex-1 overflow-hidden">
-        <div className="grid h-full grid-cols-1 gap-4 p-3 md:p-4 lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_22rem]">
-          <main className="flex min-h-0 flex-col overflow-hidden rounded-[1.25rem] border border-border/70 bg-background/80 shadow-[0_18px_70px_-36px_rgba(0,0,0,0.45)] backdrop-blur-sm">
-            <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                  Active Edit
-                </p>
-                <h2 className="text-sm font-semibold text-foreground md:text-base">
-                  Playback and transcript stay in view while you edit
-                </h2>
+            <ResizableHandle withHandle className="hidden lg:flex" />
+
+            <ResizablePanel defaultSize={28} minSize={22} maxSize={38}>
+              <aside className="flex h-full min-h-0 flex-col gap-4">
+                <Card className="border-border/70 bg-card/75 py-0 shadow-[0_18px_70px_-36px_rgba(0,0,0,0.45)]">
+                  <CardHeader className="gap-2 px-5 py-4">
+                    <div className="flex items-center gap-2 text-brand">
+                      <Sparkles className="size-4" />
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em]">Utility Rail</p>
+                    </div>
+                    <CardTitle className="text-sm">Assistant and cleanup tools stay open while the edit stays primary.</CardTitle>
+                  </CardHeader>
+                </Card>
+                <Card className="flex min-h-0 flex-1 overflow-hidden border-border/70 bg-card/80 py-0 shadow-[0_18px_70px_-36px_rgba(0,0,0,0.45)]">
+                  <AIAssistant />
+                </Card>
+              </aside>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
+
+        <div className="flex h-full flex-col gap-4 lg:hidden">
+          <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-border/70 bg-background/90 py-0 shadow-[0_18px_70px_-36px_rgba(0,0,0,0.45)]">
+            <CardHeader className="gap-3 px-5 py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                    Active Edit
+                  </p>
+                  <CardTitle className="mt-2 text-base">
+                    Playback and transcript stay in view while you edit.
+                  </CardTitle>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => setAiOpen(true)}
+                >
+                  <Bot className="size-4" />
+                  Assistant
+                </Button>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2 lg:hidden"
-                onClick={() => setAiOpen(true)}
-              >
-                <Bot className="size-4" />
-                Assistant
-              </Button>
-            </div>
-
-            <div className="grid min-h-0 flex-1 grid-rows-[minmax(17rem,36vh)_minmax(0,1fr)] lg:grid-rows-[minmax(20rem,40vh)_minmax(0,1fr)]">
-              <div className="min-h-0 border-b border-border/60 bg-card/40">
+            </CardHeader>
+            <Separator />
+            <CardContent className="grid min-h-0 flex-1 grid-rows-[minmax(17rem,34vh)_minmax(0,1fr)] px-4 py-4">
+              <Card className="min-h-0 overflow-hidden border-border/60 bg-background/60 py-0 shadow-none">
                 <VideoPlayer />
-              </div>
-              <div className="min-h-0">
+              </Card>
+              <div className="min-h-0 pt-4">
                 <EditorTabs />
               </div>
-            </div>
-          </main>
-
-          <aside className="hidden min-h-0 lg:flex lg:flex-col">
-            <div className="mb-4 rounded-[1.25rem] border border-border/70 bg-card/70 p-4 shadow-[0_18px_70px_-36px_rgba(0,0,0,0.45)] backdrop-blur-sm">
-              <div className="flex items-center gap-2 text-brand">
-                <Sparkles className="size-4" />
-                <p className="text-xs font-semibold uppercase tracking-[0.18em]">Utility Rail</p>
-              </div>
-              <p className="mt-2 text-sm font-medium text-foreground">Use AI, cleanup, and review tools without stealing space from the main edit.</p>
-            </div>
-            <div className="min-h-0 flex-1 overflow-hidden rounded-[1.25rem] border border-border/70 bg-card/80 shadow-[0_18px_70px_-36px_rgba(0,0,0,0.45)] backdrop-blur-sm">
-              <AIAssistant />
-            </div>
-          </aside>
+            </CardContent>
+          </Card>
         </div>
       </div>
 

@@ -11,8 +11,20 @@ import {
   SkipForward,
   Captions,
   Scissors,
+  Keyboard,
 } from 'lucide-react'
+import { AspectRatio } from '@/components/ui/aspect-ratio'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Kbd } from '@/components/ui/kbd'
+import { Separator } from '@/components/ui/separator'
 import { Slider } from '@/components/ui/slider'
 import { useAuthedFetch } from '@/lib/authed-fetch'
 import { useApp } from '@/lib/app-context'
@@ -307,109 +319,124 @@ export function VideoPlayer() {
 
   return (
     <div
-      className="relative flex flex-col bg-black"
+      className="relative flex h-full flex-col overflow-hidden rounded-[inherit] bg-zinc-950"
       onMouseMove={handleMouseMove}
       onMouseLeave={() => isPlaying && setShowControls(false)}
       onTouchStart={handleTouch}
     >
-      <div className="flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-white/6 via-white/3 to-transparent px-4 py-2 text-xs text-white/72">
-        <div>
-          <p className="font-semibold tracking-[0.16em] uppercase text-white/45">Review Surface</p>
-          <p className="text-sm text-white/88">{project?.title ?? 'Playback preview'}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/6 px-2.5 py-1">
-            <Captions className="size-3.5" />
-            {visibleOverlays.length} overlays visible
-          </span>
-          <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/6 px-2.5 py-1">
-            <Scissors className="size-3.5" />
-            {Math.max(0, trimRange?.end ?? duration) > 0 && trimRange
-              ? `${formatTime(trimRange.start)} - ${formatTime(trimRange.end)}`
-              : 'Full clip'}
-          </span>
-        </div>
-      </div>
-
-      <div className="relative flex-1 overflow-hidden bg-black">
-        {project?.fileUrl ? (
-          <video
-            ref={videoRef}
-            src={project.fileUrl}
-            className="size-full object-contain"
-            onClick={togglePlay}
-            onError={handleVideoError}
-            onLoadedData={() => {
-              playbackRetryRef.current = false
-            }}
-            playsInline
-          />
-        ) : (
-          // Placeholder when no real file
-          <div
-            className="flex size-full cursor-pointer items-center justify-center bg-zinc-950"
-            onClick={togglePlay}
-          >
-            <div className="text-center">
-              <div className={cn(
-                'mx-auto mb-3 flex size-16 items-center justify-center rounded-full border border-white/10 bg-white/5 transition-transform duration-150',
-                isPlaying ? 'scale-95' : 'scale-100',
-              )}>
-                {isPlaying
-                  ? <Pause className="size-7 text-white/80" />
-                  : <Play className="size-7 translate-x-0.5 text-white/80" />}
-              </div>
-              <p className="text-xs text-white/30">{project?.title ?? 'No video selected'}</p>
-              <p className="mt-1 text-xs text-white/20">Click to toggle playback simulation</p>
-            </div>
+      <CardHeader className="shrink-0 gap-3 border-b border-white/10 bg-gradient-to-r from-white/6 via-white/3 to-transparent px-4 py-3 text-white/80">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="font-semibold tracking-[0.16em] uppercase text-white/45">Review Surface</p>
+            <CardTitle className="mt-1 text-sm text-white/90">{project?.title ?? 'Playback preview'}</CardTitle>
           </div>
-        )}
+          <div className="hidden items-center gap-2 md:flex">
+            <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
+              <Captions className="size-3.5" />
+              {visibleOverlays.length} overlays visible
+            </Badge>
+            <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
+              <Scissors className="size-3.5" />
+              {Math.max(0, trimRange?.end ?? duration) > 0 && trimRange
+                ? `${formatTime(trimRange.start)} - ${formatTime(trimRange.end)}`
+                : 'Full clip'}
+            </Badge>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 md:hidden">
+          <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
+            <Captions className="size-3.5" />
+            {visibleOverlays.length} overlays
+          </Badge>
+          <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
+            <Scissors className="size-3.5" />
+            {trimRange ? 'Trim active' : 'Full clip'}
+          </Badge>
+        </div>
+      </CardHeader>
 
-        {/* Text overlays */}
-        {visibleOverlays.map((overlay) => (
-          <div
-            key={overlay.id}
-            className="pointer-events-none absolute"
-            style={{
-              left: `${overlay.x}%`,
-              top: `${overlay.y}%`,
-              transform: 'translate(-50%, -50%)',
-            }}
-          >
-            <span
+      <div className="relative flex-1 overflow-hidden px-4 py-4">
+        <AspectRatio ratio={16 / 9} className="size-full overflow-hidden rounded-2xl border border-white/10 bg-black">
+          {project?.fileUrl ? (
+            <video
+              ref={videoRef}
+              src={project.fileUrl}
+              className="size-full object-contain"
+              onClick={togglePlay}
+              onError={handleVideoError}
+              onLoadedData={() => {
+                playbackRetryRef.current = false
+              }}
+              playsInline
+            />
+          ) : (
+            <div
+              className="flex size-full cursor-pointer items-center justify-center bg-zinc-950"
+              onClick={togglePlay}
+            >
+              <Card className="border-white/10 bg-white/5 py-0 text-center shadow-none backdrop-blur">
+                <CardContent className="px-8 py-8">
+                  <div className={cn(
+                    'mx-auto mb-3 flex size-16 items-center justify-center rounded-full border border-white/10 bg-white/5 transition-transform duration-150',
+                    isPlaying ? 'scale-95' : 'scale-100',
+                  )}>
+                    {isPlaying
+                      ? <Pause className="size-7 text-white/80" />
+                      : <Play className="size-7 translate-x-0.5 text-white/80" />}
+                  </div>
+                  <p className="text-xs text-white/60">{project?.title ?? 'No video selected'}</p>
+                  <p className="mt-1 text-xs text-white/35">Click to toggle playback simulation</p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {visibleOverlays.map((overlay) => (
+            <div
+              key={overlay.id}
+              className="pointer-events-none absolute"
               style={{
-                fontSize: `${overlay.fontSize}px`,
-                color: overlay.fontColor,
-                fontWeight: overlay.fontWeight,
-                backgroundColor: `${overlay.bgColor}${Math.round(overlay.bgOpacity * 255).toString(16).padStart(2, '0')}`,
-                padding: '4px 10px',
-                borderRadius: '4px',
-                display: 'inline-block',
-                lineHeight: 1.4,
-                maxWidth: `${overlay.width ?? 80}%`,
-                textAlign: 'center',
+                left: `${overlay.x}%`,
+                top: `${overlay.y}%`,
+                transform: 'translate(-50%, -50%)',
               }}
             >
-              {overlay.text}
-            </span>
-          </div>
-        ))}
+              <span
+                style={{
+                  fontSize: `${overlay.fontSize}px`,
+                  color: overlay.fontColor,
+                  fontWeight: overlay.fontWeight,
+                  backgroundColor: `${overlay.bgColor}${Math.round(overlay.bgOpacity * 255).toString(16).padStart(2, '0')}`,
+                  padding: '4px 10px',
+                  borderRadius: '4px',
+                  display: 'inline-block',
+                  lineHeight: 1.4,
+                  maxWidth: `${overlay.width ?? 80}%`,
+                  textAlign: 'center',
+                }}
+              >
+                {overlay.text}
+              </span>
+            </div>
+          ))}
+        </AspectRatio>
       </div>
 
       <div className={cn(
         'flex flex-col gap-3 border-t border-white/10 bg-black/88 px-4 py-4 transition-opacity duration-300',
         !showControls && isPlaying ? 'opacity-75' : 'opacity-100',
       )}>
-        <div
-          className="group relative cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] p-3"
+        <Card
+          className="group relative cursor-pointer gap-0 rounded-xl border border-white/10 bg-white/[0.03] py-0 shadow-none"
           onClick={handleProgressClick}
           onTouchEnd={handleProgressClick}
         >
-          <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-[0.16em] text-white/45">
+          <CardHeader className="mb-0 flex-row items-center justify-between px-3 py-3 text-[11px] uppercase tracking-[0.16em] text-white/45">
             <span>Timeline</span>
             <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
-          </div>
+          </CardHeader>
 
+          <CardContent className="relative px-3 pb-3">
           <div className="relative flex h-10 items-end gap-px overflow-hidden rounded-md">
             {Array.from({ length: WAVEFORM_BARS }, (_, i) => {
               const barPct = (i / WAVEFORM_BARS) * 100
@@ -471,10 +498,11 @@ export function VideoPlayer() {
               />
             </>
           )}
-        </div>
+          </CardContent>
+        </Card>
 
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] p-1.5 backdrop-blur-md">
+          <ButtonGroup className="rounded-full border border-white/10 bg-white/[0.05] p-1.5 backdrop-blur-md">
             <Button
               variant="ghost"
               size="icon-sm"
@@ -503,20 +531,23 @@ export function VideoPlayer() {
             >
               <SkipForward className="size-4" />
             </Button>
-          </div>
+          </ButtonGroup>
 
-          <div className="min-w-[11rem] rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2 font-mono text-xs font-medium tracking-wider text-white/85">
-            <div className="flex items-center justify-between gap-3">
-              <span>Current</span>
-              <span>{formatTime(currentTime)}</span>
-            </div>
-            <div className="mt-1 flex items-center justify-between gap-3 text-white/55">
-              <span>Duration</span>
-              <span>{formatTime(duration)}</span>
-            </div>
-          </div>
+          <Card className="min-w-[11rem] gap-0 rounded-2xl border border-white/10 bg-white/[0.05] py-0 font-mono text-xs font-medium tracking-wider text-white/85 shadow-none">
+            <CardContent className="px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <span>Current</span>
+                <span>{formatTime(currentTime)}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-3 text-white/55">
+                <span>Duration</span>
+                <span>{formatTime(duration)}</span>
+              </div>
+            </CardContent>
+          </Card>
 
-          <div className="ml-auto flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] p-1.5 backdrop-blur-md">
+          <Card className="ml-auto gap-0 rounded-2xl border border-white/10 bg-white/[0.05] py-0 shadow-none backdrop-blur-md">
+            <CardContent className="flex items-center gap-2 px-2 py-2">
             <Button
               variant="ghost"
               size="icon-sm"
@@ -539,7 +570,7 @@ export function VideoPlayer() {
                 className="[&_[data-slot=slider-range]]:bg-white [&_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-thumb]]:border-white hover:[&_[data-slot=slider-thumb]]:scale-110 transition-transform"
               />
             </div>
-            <div className="w-px h-4 bg-white/20 mx-1" />
+            <Separator orientation="vertical" className="h-4 bg-white/20" />
             <Button
               variant="ghost"
               size="icon-sm"
@@ -549,7 +580,19 @@ export function VideoPlayer() {
             >
               <Maximize className="size-4" />
             </Button>
-          </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 text-[10px] text-white/45">
+          <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-white/60">
+            <Keyboard className="size-3.5" />
+            Shortcuts
+          </Badge>
+          <Kbd className="border-white/10 bg-white/5 text-white/70">Space</Kbd>
+          <Kbd className="border-white/10 bg-white/5 text-white/70">J</Kbd>
+          <Kbd className="border-white/10 bg-white/5 text-white/70">L</Kbd>
+          <span>Play / back 5s / forward 5s</span>
         </div>
       </div>
     </div>

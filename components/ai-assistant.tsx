@@ -16,7 +16,24 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Textarea } from '@/components/ui/textarea'
+import { Badge } from '@/components/ui/badge'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupTextarea,
+} from '@/components/ui/input-group'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Separator } from '@/components/ui/separator'
 import { useApp } from '@/lib/app-context'
 import type { TextOverlay } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -85,15 +102,15 @@ function ToolCallCard({
       state === 'approval-responded')
 
   return (
-    <div
+    <Card
       className={cn(
-        'mt-2 overflow-hidden rounded-lg border bg-muted/30',
+        'mt-2 gap-0 overflow-hidden border bg-muted/30 py-0 shadow-none',
         failed && 'border-destructive/40 bg-destructive/5',
         doneOk && 'border-brand/30 bg-brand/5',
         !failed && !doneOk && 'border-border',
       )}
     >
-      <div className="flex items-center gap-2 px-3 py-2">
+      <CardContent className="flex items-center gap-2 px-3 py-2">
         <Wand2
           className={cn(
             'size-3.5 shrink-0',
@@ -109,7 +126,7 @@ function ToolCallCard({
           {ACTION_ICONS[toolName] ?? toolName}
         </span>
         {inFlight && <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />}
-      </div>
+      </CardContent>
       {doneOk && (
         <div className="flex items-center gap-1 border-t border-brand/20 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-green-600 dark:text-green-500">
           <Check className="size-3" />
@@ -127,7 +144,7 @@ function ToolCallCard({
           This action was not approved.
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -153,17 +170,19 @@ function MessageBubble({ message }: { message: UIMessage }) {
         {message.parts.map((part, i) => {
           if (isTextUIPart(part) && part.text.trim()) {
             return (
-              <div
+              <Card
                 key={`${message.id}-t-${i}`}
                 className={cn(
-                  'rounded-2xl px-3 py-2 text-sm leading-relaxed',
+                  'gap-0 rounded-2xl px-0 py-0 text-sm leading-relaxed shadow-none',
                   isUser
                     ? 'rounded-tr-sm bg-secondary text-foreground'
                     : 'rounded-tl-sm bg-muted text-foreground',
                 )}
               >
-                <>{renderMarkdown(part.text)}</>
-              </div>
+                <CardContent className="px-3 py-2">
+                  <>{renderMarkdown(part.text)}</>
+                </CardContent>
+              </Card>
             )
           }
           if (isToolUIPart(part)) {
@@ -402,25 +421,28 @@ export function AIAssistant() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <div className="shrink-0 border-b border-border/60 bg-card/50 px-4 py-4">
+      <CardHeader className="shrink-0 gap-4 px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
-            <div className="flex size-9 items-center justify-center rounded-xl bg-brand/15">
+            <div className="flex size-9 items-center justify-center rounded-xl border border-brand/20 bg-brand/15">
               <Sparkles className="size-4 text-brand" />
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">AI Assistant</p>
-              <p className="mt-1 text-sm font-semibold text-foreground">Draft cleanup, overlay generation, and trim suggestions without leaving the edit.</p>
-              <div className="mt-2 flex items-center gap-1.5">
-                <div
-                  className={cn(
-                    'size-1.5 rounded-full',
-                    busy ? 'animate-pulse bg-amber-400' : 'bg-green-400',
-                  )}
-                />
-                <span className="text-xs text-muted-foreground">
+              <CardTitle className="mt-1 text-sm">Draft cleanup, overlay generation, and trim suggestions without leaving the edit.</CardTitle>
+              <div className="mt-2 flex items-center gap-2">
+                <Badge variant="outline" className="rounded-full px-2 py-0 text-[10px]">
+                  <div
+                    className={cn(
+                      'mr-1 size-1.5 rounded-full',
+                      busy ? 'animate-pulse bg-amber-400' : 'bg-green-400',
+                    )}
+                  />
                   {busy ? 'Thinking...' : 'Ready'}
-                </span>
+                </Badge>
+                <Badge variant="secondary" className="rounded-full px-2 py-0 text-[10px] uppercase tracking-[0.16em]">
+                  Utility rail
+                </Badge>
               </div>
             </div>
           </div>
@@ -431,35 +453,45 @@ export function AIAssistant() {
           )}
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2 text-xs xl:grid-cols-3">
-          <div className="rounded-xl border border-border/70 bg-background/80 px-3 py-2">
-            <p className="text-muted-foreground">Transcript</p>
-            <p className="mt-1 font-semibold text-foreground">{transcriptSegmentCount} segments</p>
-          </div>
-          <div className="rounded-xl border border-border/70 bg-background/80 px-3 py-2">
-            <p className="text-muted-foreground">Overlays</p>
-            <p className="mt-1 font-semibold text-foreground">{overlayCount} current</p>
-          </div>
-          <div className="col-span-2 rounded-xl border border-border/70 bg-background/80 px-3 py-2 xl:col-span-1">
-            <p className="text-muted-foreground">Best for</p>
-            <p className="mt-1 font-semibold text-foreground">Cleanup, subtitle generation, and quick editorial passes</p>
-          </div>
+        <div className="grid grid-cols-2 gap-2 text-xs xl:grid-cols-3">
+          <Card className="gap-0 rounded-xl border-border/70 bg-background/80 py-0 shadow-none">
+            <CardContent className="px-3 py-2">
+              <p className="text-muted-foreground">Transcript</p>
+              <p className="mt-1 font-semibold text-foreground">{transcriptSegmentCount} segments</p>
+            </CardContent>
+          </Card>
+          <Card className="gap-0 rounded-xl border-border/70 bg-background/80 py-0 shadow-none">
+            <CardContent className="px-3 py-2">
+              <p className="text-muted-foreground">Overlays</p>
+              <p className="mt-1 font-semibold text-foreground">{overlayCount} current</p>
+            </CardContent>
+          </Card>
+          <Card className="col-span-2 gap-0 rounded-xl border-border/70 bg-background/80 py-0 shadow-none xl:col-span-1">
+            <CardContent className="px-3 py-2">
+              <p className="text-muted-foreground">Best for</p>
+              <p className="mt-1 font-semibold text-foreground">Cleanup, subtitle generation, and quick editorial passes</p>
+            </CardContent>
+          </Card>
         </div>
-      </div>
+      </CardHeader>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        {isEmpty ? (
-          <div className="flex h-full flex-col items-center justify-center gap-5 p-5">
-            <div className="flex size-12 items-center justify-center rounded-2xl bg-brand/10">
-              <Sparkles className="size-6 text-brand" />
-            </div>
-            <div className="text-center">
-              <p className="text-sm font-semibold">Ask me anything</p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                I can edit transcripts, add overlays, trim video, and more — just describe what you need.
-              </p>
-            </div>
-            <div className="grid w-full grid-cols-1 gap-2">
+      <Separator />
+
+      <ScrollArea className="flex-1">
+        <div ref={scrollRef} className="min-h-full">
+          {isEmpty ? (
+          <div className="flex h-full items-center justify-center p-5">
+            <Empty className="w-full border-border/60 bg-muted/10">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Sparkles className="size-5" />
+                </EmptyMedia>
+                <EmptyTitle>Ask me anything</EmptyTitle>
+                <EmptyDescription>
+                  I can edit transcripts, add overlays, trim video, and more. Describe the editorial change you want and I’ll apply it in context.
+                </EmptyDescription>
+              </EmptyHeader>
+              <div className="grid w-full grid-cols-1 gap-2">
               {SUGGESTED_PROMPTS.map((prompt) => (
                 <Button
                   key={prompt}
@@ -471,7 +503,8 @@ export function AIAssistant() {
                   {prompt}
                 </Button>
               ))}
-            </div>
+              </div>
+            </Empty>
           </div>
         ) : (
           <div className="space-y-4 p-4">
@@ -492,16 +525,20 @@ export function AIAssistant() {
               <MessageBubble key={msg.id} message={msg} />
             ))}
           </div>
-        )}
-      </div>
+          )}
+        </div>
+      </ScrollArea>
 
-      <form
-        className="shrink-0 border-t border-border/60 bg-background/95 p-4 backdrop-blur-sm"
-        onSubmit={(e) => {
-          e.preventDefault()
-          void submitMessage()
-        }}
-      >
+      <Separator />
+
+      <CardFooter className="shrink-0 bg-background/95 p-4 backdrop-blur-sm">
+        <form
+          className="w-full"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void submitMessage()
+          }}
+        >
         {error && (
           <Alert variant="destructive" className="mb-3 pr-10">
             <AlertCircle />
@@ -521,37 +558,33 @@ export function AIAssistant() {
             </Button>
           </Alert>
         )}
-        <div className="relative rounded-2xl border border-input bg-muted/30 transition-colors focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/30">
-          <Textarea
+        <InputGroup className="min-h-[8rem] items-stretch rounded-2xl border-input bg-muted/30 transition-colors focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/30">
+          <InputGroupTextarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask me to edit the transcript, add overlays, trim video..."
-            rows={3}
             disabled={busy}
-            className="min-h-0 resize-none border-0 bg-transparent px-4 pt-4 pb-2 text-sm shadow-none focus-visible:ring-0"
+            className="min-h-[5rem] px-4 pt-4 pb-2 text-sm"
           />
-          <div className="flex items-center justify-between px-4 pb-3 pt-1">
+          <InputGroupAddon align="block-end" className="justify-between border-t border-border/60 px-4 pb-3 pt-3">
             <span className="text-xs text-muted-foreground/50">
               {input.length > 0 ? `${input.length} chars · ` : ''}
               Cmd+Enter to send
             </span>
-            <Button
+            <InputGroupButton
               size="icon-sm"
               type="submit"
               disabled={!input.trim() || busy}
               className="size-9 rounded-xl bg-brand text-brand-foreground hover:bg-brand/90 disabled:opacity-40"
             >
-              {busy ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Send className="size-3.5" />
-              )}
-            </Button>
-          </div>
-        </div>
-      </form>
+              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
+        </form>
+      </CardFooter>
     </div>
   )
 }

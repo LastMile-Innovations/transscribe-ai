@@ -15,6 +15,16 @@ import { Slider } from '@/components/ui/slider'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
+import { Badge } from '@/components/ui/badge'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Field, FieldContent, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { useApp } from '@/lib/app-context'
 import type { TextOverlay } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -96,155 +106,157 @@ function OverlayCard({
   } as const
 
   return (
-    <div
+    <Card
       className={cn(
-        'rounded-2xl border transition-all duration-150',
+        'gap-0 overflow-hidden border transition-all duration-150 shadow-none',
         isActive ? 'border-brand/50 bg-brand/5' : 'border-border bg-muted/30',
       )}
     >
-      <div 
-        className="cursor-pointer px-4 py-3 hover:bg-muted/50"
-        onClick={() => setExpanded(!expanded)}
-      >
+      <CardHeader className="cursor-pointer gap-3 px-4 py-4 hover:bg-muted/20" onClick={() => setExpanded(!expanded)}>
         <div className="flex items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border bg-muted/50">
             <Type className="size-4 text-muted-foreground" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <p className="truncate text-sm font-medium">{overlay.text || '(empty)'}</p>
+              <CardTitle className="truncate text-sm">{overlay.text || '(empty)'}</CardTitle>
               {isActive && (
-                <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-brand">
+                <Badge className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-brand">
                   Live
-                </span>
+                </Badge>
               )}
             </div>
-            <p className="mt-1 font-mono text-xs text-muted-foreground">
+            <CardDescription className="mt-1 font-mono text-xs">
               {formatTime(overlay.startTime)} – {formatTime(overlay.endTime)}
-            </p>
+            </CardDescription>
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="size-9 rounded-full"
+              onClick={() => setExpanded(!expanded)}
+              aria-label={expanded ? 'Collapse overlay settings' : 'Expand overlay settings'}
+            >
+              {expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="size-9 rounded-full hover:bg-destructive/10 hover:text-destructive"
+              onClick={handleDelete}
+              aria-label="Delete overlay"
+            >
+              <Trash2 className="size-3" />
+            </Button>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="size-9 rounded-full"
-            onClick={() => setExpanded(!expanded)}
-            aria-label={expanded ? 'Collapse overlay settings' : 'Expand overlay settings'}
-          >
-            {expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="size-9 rounded-full hover:bg-destructive/10 hover:text-destructive"
-            onClick={handleDelete}
-            aria-label="Delete overlay"
-          >
-            <Trash2 className="size-3" />
-          </Button>
-        </div>
-      </div>
+      </CardHeader>
 
       {expanded && (
         <>
           <Separator />
-          <div className="space-y-5 px-4 py-4">
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Text content</label>
-              <Textarea
-                value={overlay.text}
-                onChange={(e) => update({ text: e.target.value })}
-                rows={2}
-                className="min-h-0 resize-none bg-background text-sm"
-              />
-            </div>
+          <CardContent className="space-y-5 px-4 py-4">
+            <FieldGroup>
+              <Field>
+                <FieldLabel>Text content</FieldLabel>
+                <FieldContent>
+                  <Textarea
+                    value={overlay.text}
+                    onChange={(e) => update({ text: e.target.value })}
+                    rows={2}
+                    className="min-h-0 resize-none bg-background text-sm"
+                  />
+                </FieldContent>
+              </Field>
 
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Start (mm:ss)</label>
-                <Input
-                  type="text"
-                  defaultValue={formatTime(overlay.startTime)}
-                  onBlur={(e) => update({ startTime: msFromInput(e.target.value) })}
-                  className="h-8 bg-background px-2.5 font-mono text-sm"
-                />
+              <div className="grid grid-cols-2 gap-2">
+                <Field>
+                  <FieldLabel>Start (mm:ss)</FieldLabel>
+                  <FieldContent>
+                    <Input
+                      type="text"
+                      defaultValue={formatTime(overlay.startTime)}
+                      onBlur={(e) => update({ startTime: msFromInput(e.target.value) })}
+                      className="h-8 bg-background px-2.5 font-mono text-sm"
+                    />
+                  </FieldContent>
+                </Field>
+                <Field>
+                  <FieldLabel>End (mm:ss)</FieldLabel>
+                  <FieldContent>
+                    <Input
+                      type="text"
+                      defaultValue={formatTime(overlay.endTime)}
+                      onBlur={(e) => update({ endTime: msFromInput(e.target.value) })}
+                      className="h-8 bg-background px-2.5 font-mono text-sm"
+                    />
+                  </FieldContent>
+                </Field>
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">End (mm:ss)</label>
-                <Input
-                  type="text"
-                  defaultValue={formatTime(overlay.endTime)}
-                  onBlur={(e) => update({ endTime: msFromInput(e.target.value) })}
-                  className="h-8 bg-background px-2.5 font-mono text-sm"
-                />
+            </FieldGroup>
+
+            <Separator />
+
+            <FieldGroup>
+              <div className="grid grid-cols-2 gap-3">
+                <Field>
+                  <FieldLabel className="justify-between">
+                    <span>Horizontal</span>
+                    <Badge variant="outline" className="font-mono text-[10px]">{Math.round(overlay.x)}%</Badge>
+                  </FieldLabel>
+                  <FieldContent>
+                    <Slider min={0} max={100} step={1} value={[overlay.x]} onValueChange={([v]) => update({ x: v })} />
+                  </FieldContent>
+                </Field>
+                <Field>
+                  <FieldLabel className="justify-between">
+                    <span>Vertical</span>
+                    <Badge variant="outline" className="font-mono text-[10px]">{Math.round(overlay.y)}%</Badge>
+                  </FieldLabel>
+                  <FieldContent>
+                    <Slider min={0} max={100} step={1} value={[overlay.y]} onValueChange={([v]) => update({ y: v })} />
+                  </FieldContent>
+                </Field>
               </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-muted-foreground">
-                  <span>Horizontal</span>
-                  <span className="font-mono">{Math.round(overlay.x)}%</span>
-                </label>
-                <Slider
-                  min={0} max={100} step={1}
-                  value={[overlay.x]}
-                  onValueChange={([v]) => update({ x: v })}
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-muted-foreground">
-                  <span>Vertical</span>
-                  <span className="font-mono">{Math.round(overlay.y)}%</span>
-                </label>
-                <Slider
-                  min={0} max={100} step={1}
-                  value={[overlay.y]}
-                  onValueChange={([v]) => update({ y: v })}
-                />
-              </div>
-            </div>
+              <Field>
+                <FieldLabel className="justify-between">
+                  <span>Font size</span>
+                  <Badge variant="outline" className="font-mono text-[10px]">{overlay.fontSize}px</Badge>
+                </FieldLabel>
+                <FieldContent>
+                  <Slider min={10} max={72} step={1} value={[overlay.fontSize]} onValueChange={([v]) => update({ fontSize: v })} />
+                </FieldContent>
+              </Field>
 
-            <div>
-              <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-muted-foreground">
-                <span>Font size</span>
-                <span className="font-mono">{overlay.fontSize}px</span>
-              </label>
-              <Slider
-                min={10} max={72} step={1}
-                value={[overlay.fontSize]}
-                onValueChange={([v]) => update({ fontSize: v })}
-              />
-            </div>
+              <Field>
+                <FieldLabel className="justify-between">
+                  <span>Text width</span>
+                  <Badge variant="outline" className="font-mono text-[10px]">{Math.round(overlay.width ?? 80)}%</Badge>
+                </FieldLabel>
+                <FieldContent>
+                  <Slider min={20} max={100} step={1} value={[overlay.width ?? 80]} onValueChange={([v]) => update({ width: v })} />
+                </FieldContent>
+              </Field>
 
-            <div>
-              <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-muted-foreground">
-                <span>Text width</span>
-                <span className="font-mono">{Math.round(overlay.width ?? 80)}%</span>
-              </label>
-              <Slider
-                min={20} max={100} step={1}
-                value={[overlay.width ?? 80]}
-                onValueChange={([v]) => update({ width: v })}
-              />
-            </div>
+              <Field>
+                <FieldLabel className="justify-between">
+                  <span>Background opacity</span>
+                  <Badge variant="outline" className="font-mono text-[10px]">{Math.round(overlay.bgOpacity * 100)}%</Badge>
+                </FieldLabel>
+                <FieldContent>
+                  <Slider min={0} max={1} step={0.05} value={[overlay.bgOpacity]} onValueChange={([v]) => update({ bgOpacity: v })} />
+                </FieldContent>
+              </Field>
+            </FieldGroup>
 
-            <div>
-              <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-muted-foreground">
-                <span>Background opacity</span>
-                <span className="font-mono">{Math.round(overlay.bgOpacity * 100)}%</span>
-              </label>
-              <Slider
-                min={0} max={1} step={0.05}
-                value={[overlay.bgOpacity]}
-                onValueChange={([v]) => update({ bgOpacity: v })}
-              />
-            </div>
+            <Separator />
 
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-muted-foreground">Weight</span>
-              <div className="flex gap-1">
+            <Field>
+              <FieldLabel>Weight</FieldLabel>
+              <FieldContent>
+                <div className="flex gap-1">
                 {(['normal', 'bold'] as const).map((w) => (
                   <button
                     key={w}
@@ -261,11 +273,13 @@ function OverlayCard({
                     {w.charAt(0).toUpperCase() + w.slice(1)}
                   </button>
                 ))}
-              </div>
-            </div>
+                </div>
+              </FieldContent>
+            </Field>
 
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Font color</label>
+            <Field>
+              <FieldLabel>Font color</FieldLabel>
+              <FieldContent>
               <div className="flex flex-wrap gap-1.5">
                 {FONT_COLORS.map((c) => (
                   <button
@@ -281,10 +295,12 @@ function OverlayCard({
                   />
                 ))}
               </div>
-            </div>
+              </FieldContent>
+            </Field>
 
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Background color</label>
+            <Field>
+              <FieldLabel>Background color</FieldLabel>
+              <FieldContent>
               <div className="flex flex-wrap gap-1.5">
                 {BG_COLORS.map((c) => (
                   <button
@@ -301,10 +317,13 @@ function OverlayCard({
                   />
                 ))}
               </div>
-            </div>
+              </FieldContent>
+            </Field>
 
-            <div className="rounded-xl border border-border bg-zinc-900 p-4">
-              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50">Frame Preview</p>
+            <Card className="gap-0 overflow-hidden rounded-xl border-border bg-zinc-900 py-0 shadow-none">
+              <CardHeader className="px-4 py-3">
+                <CardTitle className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50">Frame Preview</CardTitle>
+              </CardHeader>
               <div className="relative flex min-h-40 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.12),transparent_40%),linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] px-4">
                 <div className="pointer-events-none absolute inset-4 rounded border border-dashed border-white/15" />
                 <div className="pointer-events-none absolute inset-7 rounded border border-dashed border-amber-200/20" />
@@ -327,14 +346,14 @@ function OverlayCard({
                   {overlay.text || 'Preview'}
                 </span>
               </div>
-              <p className="mt-3 text-xs text-muted-foreground">
+              <CardContent className="px-4 py-3 text-xs text-muted-foreground">
                 Placement mirrors the current horizontal, vertical, and width settings.
-              </p>
-            </div>
-          </div>
+              </CardContent>
+            </Card>
+          </CardContent>
         </>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -363,31 +382,40 @@ export function OverlayEditor() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center justify-between border-b border-border/60 bg-background/80 px-4 py-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Overlay Inspector</p>
-          <p className="text-sm font-medium text-foreground">{state.overlays.length} overlay{state.overlays.length !== 1 ? 's' : ''}</p>
-          <p className="text-xs text-muted-foreground">
-            {visibleIds.size} visible at {formatTime(currentTime)}
-          </p>
-        </div>
-        <Button size="sm" className="h-9 rounded-full bg-brand px-4 text-xs text-brand-foreground hover:bg-brand/90" onClick={handleAdd}>
-          <Plus className="size-3" />
-          Add overlay
-        </Button>
-      </div>
-
-      {/* List */}
-      <ScrollArea className="flex-1">
-        <div className="space-y-2 p-3">
-          {state.overlays.length === 0 ? (
-            <div className="py-12 text-center">
-              <Type className="mx-auto mb-3 size-8 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">No overlays yet.</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Click &ldquo;Add overlay&rdquo; to place text on the video.
-              </p>
+      <Card className="m-4 mb-0 shrink-0 gap-0 border-border/60 bg-background/70 py-0 shadow-none">
+        <CardHeader className="px-4 py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Overlay Inspector</p>
+              <CardTitle className="mt-1 text-sm">{state.overlays.length} overlay{state.overlays.length !== 1 ? 's' : ''}</CardTitle>
+              <CardDescription>
+                {visibleIds.size} visible at {formatTime(currentTime)}
+              </CardDescription>
             </div>
+            <Button size="sm" className="h-9 rounded-full bg-brand px-4 text-xs text-brand-foreground hover:bg-brand/90" onClick={handleAdd}>
+              <Plus className="size-3" />
+              Add overlay
+            </Button>
+          </div>
+        </CardHeader>
+      </Card>
+
+      <ScrollArea className="flex-1">
+        <div className="space-y-3 p-4">
+          {state.overlays.length === 0 ? (
+            <Empty className="border-border/60 bg-muted/10">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Type className="size-5" />
+                </EmptyMedia>
+                <EmptyTitle>No overlays yet</EmptyTitle>
+                <EmptyDescription>Use overlays for subtitles, lower-thirds, and on-screen notes tied to playback timing.</EmptyDescription>
+              </EmptyHeader>
+              <Button size="sm" className="rounded-full" onClick={handleAdd}>
+                <Plus className="size-3" />
+                Add first overlay
+              </Button>
+            </Empty>
           ) : (
             state.overlays.map((overlay) => (
               <OverlayCard
