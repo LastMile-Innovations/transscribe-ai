@@ -19,6 +19,7 @@ import {
   MoreHorizontal,
   PlusCircle,
   Briefcase,
+  Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -508,6 +509,21 @@ export function EditorTopBarActions({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="hidden h-9 gap-1.5 rounded-full px-3 text-xs text-brand lg:flex"
+              onClick={openAi}
+              aria-label="Open AI assistant"
+            >
+              <Sparkles className="size-4" />
+              AI
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Open AI assistant · ⌘⇧A to show or hide</TooltipContent>
+        </Tooltip>
         <Button
           variant="outline"
           size="icon-sm"
@@ -551,6 +567,10 @@ export function EditorTopBarActions({
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Search transcript</span>
                 <kbd className="rounded bg-muted px-1.5 font-mono">/</kbd>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Toggle AI assistant</span>
+                <kbd className="rounded bg-muted px-1.5 font-mono">⌘⇧A</kbd>
               </div>
             </div>
           </PopoverContent>

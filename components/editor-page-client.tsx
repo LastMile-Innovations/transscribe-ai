@@ -1,17 +1,13 @@
 'use client'
 
-import { useEffect } from 'react'
-import { useState } from 'react'
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from '@/components/ui/resizable'
+import { useEffect, useState } from 'react'
+import { Sparkles } from 'lucide-react'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
-import { VideoPlayer } from '@/components/video-player'
-import { EditorTabs } from '@/components/editor-tabs'
+import { Button } from '@/components/ui/button'
+import { EditorShell } from '@/components/editor-shell'
 import { AIAssistant } from '@/components/ai-assistant'
 import { useApp } from '@/lib/app-context'
+import { cn } from '@/lib/utils'
 
 export default function EditorPageClient({
   projectId,
@@ -26,9 +22,23 @@ export default function EditorPageClient({
     const handleKeyDown = (e: KeyboardEvent) => {
       const isTypingTarget =
         document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA'
-      const allowWhileTyping = e.altKey && (e.key === ' ' || e.key.toLowerCase() === 'j' || e.key.toLowerCase() === 'l')
+      const allowWhileTyping =
+        (e.altKey && (e.key === ' ' || e.key.toLowerCase() === 'j' || e.key.toLowerCase() === 'l')) ||
+        ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'a')
 
       if (isTypingTarget && !allowWhileTyping) {
+        return
+      }
+
+      if (e.key === '\\' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('editor:cycle-layout'))
+        return
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        setAiOpen((open) => !open)
         return
       }
 
@@ -72,38 +82,26 @@ export default function EditorPageClient({
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <div className="flex-1 overflow-hidden p-3 md:p-4">
-        {/* Desktop Layout */}
-        <div className="hidden h-full lg:block">
-          <ResizablePanelGroup orientation="horizontal" className="gap-4">
-            <ResizablePanel defaultSize={60} minSize={40}>
-              <div className="flex h-full min-h-0 flex-col overflow-hidden border border-border/70 rounded-xl bg-background/90 shadow-sm">
-                <EditorTabs />
-              </div>
-            </ResizablePanel>
-
-            <ResizableHandle withHandle className="hidden lg:flex" />
-
-            <ResizablePanel defaultSize={40} minSize={28}>
-              <div className="flex h-full min-h-0 flex-col overflow-hidden border border-border/70 rounded-xl bg-background/90 shadow-sm">
-                <VideoPlayer layout="sidebar" />
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </div>
-
-        {/* Mobile Layout */}
-        <div className="flex h-full flex-col gap-4 lg:hidden">
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden border border-border/70 rounded-xl bg-background/90 shadow-sm">
-            <div className="min-h-0 flex-1">
-              <EditorTabs />
-            </div>
-            <div className="h-[35vh] min-h-[17rem] shrink-0 border-t border-border/60 bg-background/60">
-              <VideoPlayer layout="sidebar" />
-            </div>
-          </div>
-        </div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 md:p-4">
+        <EditorShell />
       </div>
+
+      {!aiOpen && (
+        <Button
+          type="button"
+          size="lg"
+          className={cn(
+            'fixed z-40 h-12 w-12 rounded-full border border-border/80 bg-card p-0 shadow-lg',
+            'bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[max(1.25rem,env(safe-area-inset-left))]',
+            'hover:bg-accent hover:text-accent-foreground',
+          )}
+          onClick={() => setAiOpen(true)}
+          aria-label="Open AI assistant"
+          title="Open AI assistant (⌘⇧A)"
+        >
+          <Sparkles className="size-5 text-brand" />
+        </Button>
+      )}
 
       <Sheet open={aiOpen} onOpenChange={setAiOpen}>
         <SheetContent side="right" className="w-full p-0 sm:max-w-md md:max-w-xl">

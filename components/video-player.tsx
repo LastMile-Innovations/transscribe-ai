@@ -30,16 +30,16 @@ function formatTime(ms: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
-// Deterministic pseudo-random waveform heights based on index
-function waveBarHeight(index: number, total: number): number {
-  const x = Math.sin(index * 2.3 + total * 0.7) * 0.5 + 0.5
-  const y = Math.sin(index * 5.1) * 0.3 + 0.3
-  return Math.max(0.15, Math.min(1, x * 0.6 + y * 0.4))
-}
-
 const PLAYBACK_URL_REFRESH_BUFFER_MS = 5 * 60 * 1000
 
-export function VideoPlayer({ layout = 'default' }: { layout?: 'default' | 'sidebar' }) {
+export function VideoPlayer({
+  layout = 'default',
+  omitDockHeader = false,
+}: {
+  layout?: 'default' | 'sidebar' | 'dock'
+  /** When layout is dock inside a floating shell, hide the inner title row (parent supplies chrome). */
+  omitDockHeader?: boolean
+}) {
   const authedFetch = useAuthedFetch()
   const { state, dispatch } = useApp()
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -314,26 +314,34 @@ export function VideoPlayer({ layout = 'default' }: { layout?: 'default' | 'side
     (o) => localTime >= o.startTime && localTime <= o.endTime,
   )
 
+  const isDock = layout === 'dock'
+  const badgeClass =
+    'border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] text-[color:var(--editor-video-chrome-fg)]'
+
   return (
     <div
-      className="relative flex h-full flex-col overflow-hidden rounded-[inherit] bg-zinc-950"
+      className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-[inherit] bg-[color:var(--editor-video-bg)] text-[color:var(--editor-video-chrome-fg)]"
       onMouseMove={handleMouseMove}
       onMouseLeave={() => isPlaying && setShowControls(false)}
       onTouchStart={handleTouch}
     >
       {layout === 'default' ? (
-        <CardHeader className="shrink-0 gap-3 border-b border-white/10 bg-gradient-to-r from-white/6 via-white/3 to-transparent px-4 py-3 text-white/80">
+        <CardHeader className="shrink-0 gap-3 border-b border-[color:var(--editor-video-border)] bg-gradient-to-r from-[color:var(--editor-video-controls-bg)] via-[color:var(--editor-video-bg)] to-transparent px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="font-semibold tracking-[0.16em] uppercase text-white/45">Review Surface</p>
-              <CardTitle className="mt-1 text-sm text-white/90">{project?.title ?? 'Playback preview'}</CardTitle>
+              <p className="font-semibold tracking-[0.16em] uppercase text-[color:var(--editor-video-chrome-muted)]">
+                Review Surface
+              </p>
+              <CardTitle className="mt-1 text-sm text-[color:var(--editor-video-chrome-fg)]">
+                {project?.title ?? 'Playback preview'}
+              </CardTitle>
             </div>
             <div className="hidden items-center gap-2 md:flex">
-              <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
+              <Badge variant="outline" className={badgeClass}>
                 <Captions className="size-3.5" />
                 {visibleOverlays.length} overlays visible
               </Badge>
-              <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
+              <Badge variant="outline" className={badgeClass}>
                 <Scissors className="size-3.5" />
                 {Math.max(0, trimRange?.end ?? duration) > 0 && trimRange
                   ? `${formatTime(trimRange?.start ?? 0)} - ${formatTime(trimRange?.end ?? duration)}`
@@ -342,22 +350,38 @@ export function VideoPlayer({ layout = 'default' }: { layout?: 'default' | 'side
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 md:hidden">
-            <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
+            <Badge variant="outline" className={badgeClass}>
               <Captions className="size-3.5" />
               {visibleOverlays.length} overlays
             </Badge>
-            <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
+            <Badge variant="outline" className={badgeClass}>
               <Scissors className="size-3.5" />
               {trimRange ? 'Trim active' : 'Full clip'}
             </Badge>
           </div>
         </CardHeader>
+      ) : isDock ? (
+        omitDockHeader ? null : (
+          <div className="flex shrink-0 items-center justify-between border-b border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] px-2 py-1.5">
+            <div className="truncate text-[11px] font-medium text-[color:var(--editor-video-chrome-fg)]">
+              {project?.title ?? 'Preview'}
+            </div>
+            {trimRange && (
+              <Badge variant="outline" className={cn(badgeClass, 'px-1.5 py-0 text-[9px]')}>
+                <Scissors className="size-2.5" />
+                Trim
+              </Badge>
+            )}
+          </div>
+        )
       ) : (
-        <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-white/5 px-4 py-2 text-white/80">
-          <div className="truncate text-xs font-medium text-white/90">{project?.title ?? 'Playback preview'}</div>
+        <div className="flex shrink-0 items-center justify-between border-b border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] px-4 py-2">
+          <div className="truncate text-xs font-medium text-[color:var(--editor-video-chrome-fg)]">
+            {project?.title ?? 'Playback preview'}
+          </div>
           <div className="flex shrink-0 items-center gap-2">
             {trimRange && (
-              <Badge variant="outline" className="border-white/10 bg-white/6 text-[10px] text-white/80">
+              <Badge variant="outline" className={cn(badgeClass, 'text-[10px]')}>
                 <Scissors className="size-3" />
                 Trimmed
               </Badge>
@@ -366,8 +390,19 @@ export function VideoPlayer({ layout = 'default' }: { layout?: 'default' | 'side
         </div>
       )}
 
-      <div className="relative flex-1 overflow-hidden px-4 py-4">
-        <AspectRatio ratio={16 / 9} className="size-full overflow-hidden rounded-2xl border border-white/10 bg-black">
+      <div
+        className={cn(
+          'relative flex-1 overflow-hidden',
+          isDock ? 'px-2 py-2' : 'px-4 py-4',
+        )}
+      >
+        <AspectRatio
+          ratio={16 / 9}
+          className={cn(
+            'size-full overflow-hidden border border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-surface)]',
+            isDock ? 'max-h-[140px] rounded-lg' : 'rounded-2xl',
+          )}
+        >
           {project?.fileUrl ? (
             <video
               ref={videoRef}
@@ -382,21 +417,37 @@ export function VideoPlayer({ layout = 'default' }: { layout?: 'default' | 'side
             />
           ) : (
             <div
-              className="flex size-full cursor-pointer items-center justify-center bg-zinc-950"
+              className="flex size-full cursor-pointer items-center justify-center bg-[color:var(--editor-video-surface)]"
               onClick={togglePlay}
             >
-              <Card className="border-white/10 bg-white/5 py-0 text-center shadow-none backdrop-blur">
-                <CardContent className="px-8 py-8">
-                  <div className={cn(
-                    'mx-auto mb-3 flex size-16 items-center justify-center rounded-full border border-white/10 bg-white/5 transition-transform duration-150',
-                    isPlaying ? 'scale-95' : 'scale-100',
-                  )}>
-                    {isPlaying
-                      ? <Pause className="size-7 text-white/80" />
-                      : <Play className="size-7 translate-x-0.5 text-white/80" />}
+              <Card className="border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] py-0 text-center shadow-none backdrop-blur">
+                <CardContent className={cn('px-8 py-8', isDock && 'px-4 py-4')}>
+                  <div
+                    className={cn(
+                      'mx-auto mb-3 flex items-center justify-center rounded-full border border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] transition-transform duration-150',
+                      isDock ? 'size-12' : 'size-16',
+                      isPlaying ? 'scale-95' : 'scale-100',
+                    )}
+                  >
+                    {isPlaying ? (
+                      <Pause className={cn('text-[color:var(--editor-video-chrome-fg)]', isDock ? 'size-5' : 'size-7')} />
+                    ) : (
+                      <Play
+                        className={cn(
+                          'translate-x-0.5 text-[color:var(--editor-video-chrome-fg)]',
+                          isDock ? 'size-5' : 'size-7',
+                        )}
+                      />
+                    )}
                   </div>
-                  <p className="text-xs text-white/60">{project?.title ?? 'No video selected'}</p>
-                  <p className="mt-1 text-xs text-white/35">Click to toggle playback simulation</p>
+                  <p className="text-xs text-[color:var(--editor-video-chrome-muted)]">
+                    {project?.title ?? 'No video selected'}
+                  </p>
+                  {!isDock && (
+                    <p className="mt-1 text-xs opacity-70 text-[color:var(--editor-video-chrome-muted)]">
+                      Click to toggle playback simulation
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -433,10 +484,13 @@ export function VideoPlayer({ layout = 'default' }: { layout?: 'default' | 'side
         </AspectRatio>
       </div>
 
-      <div className={cn(
-        'flex flex-col gap-3 border-t border-white/10 bg-black/88 px-4 py-4 transition-opacity duration-300',
-        !showControls && isPlaying ? 'opacity-75' : 'opacity-100',
-      )}>
+      <div
+        className={cn(
+          'flex flex-col gap-3 border-t border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-timeline-bg)] transition-opacity duration-300',
+          isDock ? 'gap-2 px-2 py-2' : 'px-4 py-4',
+          !showControls && isPlaying ? 'opacity-75' : 'opacity-100',
+        )}
+      >
         <VideoTimeline
           currentTime={localTime}
           duration={duration}
@@ -444,6 +498,7 @@ export function VideoPlayer({ layout = 'default' }: { layout?: 'default' | 'side
           overlays={overlays}
           seek={seek}
           formatTime={formatTime}
+          compact={isDock}
         />
 
         <VideoControls
@@ -459,18 +514,28 @@ export function VideoPlayer({ layout = 'default' }: { layout?: 'default' | 'side
           setVolume={setVolume}
           fullscreen={fullscreen}
           formatTime={formatTime}
+          compact={isDock}
         />
 
-        <div className="flex flex-wrap items-center gap-2 text-[10px] text-white/45">
-          <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-white/60">
-            <Keyboard className="size-3.5" />
-            Shortcuts
-          </Badge>
-          <Kbd className="border-white/10 bg-white/5 text-white/70">Space</Kbd>
-          <Kbd className="border-white/10 bg-white/5 text-white/70">J</Kbd>
-          <Kbd className="border-white/10 bg-white/5 text-white/70">L</Kbd>
-          <span>Play / back 5s / forward 5s</span>
-        </div>
+        {!isDock && (
+          <div className="flex flex-wrap items-center gap-2 text-[10px] text-[color:var(--editor-video-chrome-muted)]">
+            <Badge variant="outline" className={cn(badgeClass, 'text-[color:var(--editor-video-chrome-muted)]')}>
+              <Keyboard className="size-3.5" />
+              Shortcuts
+            </Badge>
+            <Kbd className="border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] text-[color:var(--editor-video-chrome-fg)]">
+              Space
+            </Kbd>
+            <Kbd className="border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] text-[color:var(--editor-video-chrome-fg)]">
+              J
+            </Kbd>
+            <Kbd className="border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-controls-bg)] text-[color:var(--editor-video-chrome-fg)]">
+              L
+            </Kbd>
+            <span>Play / back 5s / forward 5s</span>
+            <span className="hidden sm:inline">{` · ⌘ + \\ cycle layout`}</span>
+          </div>
+        )}
       </div>
     </div>
   )

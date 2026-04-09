@@ -1,13 +1,17 @@
+'use client'
+
 import Link from 'next/link'
 import {
   ArrowLeft,
   Briefcase,
   ChevronRight,
   FileStack,
+  Info,
   Sparkles,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { TranscriptSummary, VideoProject } from '@/lib/types'
 import { EditorTopBarActions } from '@/components/top-bar-actions-client'
 import { EditorTopBarStatus } from '@/components/top-bar-status-client'
@@ -18,6 +22,26 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function ProjectMetaBadges({ project }: { project: VideoProject }) {
+  return (
+    <>
+      <Badge variant="outline" className="rounded-full px-2.5 py-1 font-mono">
+        {formatDuration(project.duration)} runtime
+      </Badge>
+      {project.caseId && (
+        <Badge variant="secondary" className="rounded-full px-2.5 py-1 font-mono">
+          {project.caseId}
+        </Badge>
+      )}
+      {project.exhibitNumber && (
+        <Badge variant="outline" className="rounded-full border-brand/30 px-2.5 py-1 font-mono text-brand">
+          EX-{project.exhibitNumber}
+        </Badge>
+      )}
+    </>
+  )
 }
 
 export function TopBar({
@@ -31,7 +55,7 @@ export function TopBar({
 
   return (
     <header className="border-b border-border/60 bg-background/85 backdrop-blur-md">
-      <div className="flex min-h-14 items-center gap-3 px-3 py-2 md:px-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 md:px-4">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Button variant="ghost" size="icon-sm" asChild>
             <Link href={libraryHref} aria-label="Back to library">
@@ -47,7 +71,7 @@ export function TopBar({
             <ChevronRight className="size-3.5 shrink-0 opacity-50" />
           </div>
 
-          <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
             <EditorTopBarTitle projectId={project.id} initialTitle={project.title} />
 
             {(project.caseId || project.exhibitNumber) && (
@@ -71,27 +95,42 @@ export function TopBar({
             )}
           </div>
 
+          <div className="hidden shrink-0 items-center gap-2 lg:flex">
+            <ProjectMetaBadges project={project} />
+            <span className="max-w-md truncate text-xs text-muted-foreground">
+              Core loop: play, seek, and edit transcript without leaving the page.
+            </span>
+          </div>
+
           <EditorTopBarStatus />
         </div>
 
-        <EditorTopBarActions project={project} initialTranscriptList={initialTranscriptList} />
-      </div>
-
-      <div className="flex items-center gap-2 overflow-x-auto border-t border-border/40 px-3 py-2 text-xs text-muted-foreground md:px-4">
-        <Badge variant="outline" className="rounded-full px-2.5 py-1 font-mono">
-          {formatDuration(project.duration)} runtime
-        </Badge>
-        {project.caseId && (
-          <Badge variant="secondary" className="rounded-full px-2.5 py-1 font-mono">
-            {project.caseId}
-          </Badge>
-        )}
-        {project.exhibitNumber && (
-          <Badge variant="outline" className="rounded-full border-brand/30 px-2.5 py-1 font-mono text-brand">
-            EX-{project.exhibitNumber}
-          </Badge>
-        )}
-        <span className="hidden md:inline">Core loop: play, seek, and edit transcript without leaving the page.</span>
+        <div className="flex shrink-0 items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                className="inline-flex lg:hidden"
+                aria-label="Project details"
+              >
+                <Info className="size-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80" align="end">
+              <p className="mb-2 text-xs font-medium text-foreground">Project</p>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap gap-2">
+                  <ProjectMetaBadges project={project} />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Core loop: play, seek, and edit transcript without leaving the page.
+                </p>
+              </div>
+            </PopoverContent>
+          </Popover>
+          <EditorTopBarActions project={project} initialTranscriptList={initialTranscriptList} />
+        </div>
       </div>
     </header>
   )

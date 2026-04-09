@@ -2,6 +2,8 @@
 
 import React, { createContext, useContext, useReducer, type Dispatch } from 'react'
 import type { AppState, AppAction, TranscriptSegment } from './types'
+
+/** Wrap routes that call `useApp` (e.g. library `page.tsx`, editor `editor/[id]/page.tsx`). Root layout does not provide this. */
 // ─── Initial State ────────────────────────────────────────────────────────────
 export const initialAppState: AppState = {
   projects: [],

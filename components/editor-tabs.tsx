@@ -16,8 +16,8 @@ export function EditorTabs() {
   const trimActive = Boolean(state.trimRange && state.projects.find((p) => p.id === state.activeProjectId)?.duration !== (state.trimRange.end - state.trimRange.start))
 
   return (
-    <Tabs defaultValue="transcript" className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center justify-between border-b border-border/60 bg-card/55 px-4 py-2">
+    <Tabs defaultValue="transcript" className="flex h-full flex-col bg-[color:var(--editor-canvas)]">
+      <div className="flex shrink-0 items-center justify-between border-b border-[color:var(--editor-panel-border)] bg-[color:var(--editor-chrome)] px-4 py-2">
         <TabsList className="h-auto min-w-max gap-1 rounded-xl p-1 bg-transparent">
           <TabsTrigger value="transcript" className="h-9 gap-2 rounded-lg px-3 text-xs data-[state=active]:bg-background data-[state=active]:shadow-sm">
             <FileText className="size-3.5 shrink-0" />
@@ -49,13 +49,13 @@ export function EditorTabs() {
         </TabsList>
       </div>
 
-      <TabsContent value="transcript" className="m-0 min-h-0 flex-1 overflow-hidden bg-background/70">
+      <TabsContent value="transcript" className="m-0 min-h-0 flex-1 overflow-hidden bg-[color:var(--editor-canvas)]">
         <TranscriptEditor />
       </TabsContent>
-      <TabsContent value="overlays" className="m-0 min-h-0 flex-1 overflow-hidden bg-background/70">
+      <TabsContent value="overlays" className="m-0 min-h-0 flex-1 overflow-hidden bg-[color:var(--editor-canvas)]">
         <OverlayEditor />
       </TabsContent>
-      <TabsContent value="trim" className="m-0 min-h-0 flex-1 overflow-hidden bg-background/70">
+      <TabsContent value="trim" className="m-0 min-h-0 flex-1 overflow-hidden bg-[color:var(--editor-canvas)]">
         <TrimEditor />
       </TabsContent>
     </Tabs>

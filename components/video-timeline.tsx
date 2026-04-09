@@ -3,7 +3,7 @@
 import { useCallback } from 'react'
 import { Card, CardHeader, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import type { TrimRange, Overlay } from '@/lib/types'
+import type { TrimRange, TextOverlay } from '@/lib/types'
 
 const WAVEFORM_BARS = 80
 
@@ -20,13 +20,15 @@ export function VideoTimeline({
   overlays,
   seek,
   formatTime,
+  compact = false,
 }: {
   currentTime: number
   duration: number
   trimRange: TrimRange | null
-  overlays: Overlay[]
+  overlays: TextOverlay[]
   seek: (ms: number) => void
   formatTime: (ms: number) => string
+  compact?: boolean
 }) {
   const handleProgressClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
@@ -56,17 +58,27 @@ export function VideoTimeline({
 
   return (
     <Card
-      className="group relative cursor-pointer gap-0 rounded-xl border border-white/10 bg-white/[0.03] py-0 shadow-none"
+      className={cn(
+        'group relative cursor-pointer gap-0 border border-[color:var(--editor-video-border)] bg-[color:var(--editor-video-timeline-bg)] py-0 shadow-none',
+        compact ? 'rounded-lg' : 'rounded-xl',
+      )}
       onClick={handleProgressClick}
       onTouchEnd={handleProgressClick}
     >
-      <CardHeader className="mb-0 flex-row items-center justify-between px-3 py-3 text-[11px] uppercase tracking-[0.16em] text-white/45">
-        <span>Timeline</span>
-        <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
+      <CardHeader
+        className={cn(
+          'mb-0 flex-row items-center justify-between text-[11px] uppercase tracking-[0.16em] text-[color:var(--editor-video-chrome-muted)]',
+          compact ? 'px-2 py-1.5 text-[10px] normal-case tracking-normal' : 'px-3 py-3',
+        )}
+      >
+        {!compact && <span>Timeline</span>}
+        <span className={cn(compact && 'w-full text-center')}>
+          {formatTime(currentTime)} / {formatTime(duration)}
+        </span>
       </CardHeader>
 
-      <CardContent className="relative px-3 pb-3">
-        <div className="relative flex h-8 items-end gap-[2px] overflow-hidden rounded-md">
+      <CardContent className={cn('relative', compact ? 'px-2 pb-2' : 'px-3 pb-3')}>
+        <div className={cn('relative flex items-end gap-[2px] overflow-hidden rounded-md', compact ? 'h-6' : 'h-8')}>
           {Array.from({ length: WAVEFORM_BARS }, (_, i) => {
             const barPct = (i / WAVEFORM_BARS) * 100
             const isInTrim = barPct >= trimStartPct && barPct <= trimEndPct
@@ -91,7 +103,8 @@ export function VideoTimeline({
             key={marker.id}
             type="button"
             className={cn(
-              'absolute bottom-3 top-8 overflow-hidden rounded-sm border text-left text-[10px] leading-none text-white/80 transition-colors',
+              'absolute overflow-hidden rounded-sm border text-left text-[10px] leading-none text-[color:var(--editor-video-chrome-fg)] transition-colors',
+              compact ? 'bottom-2 top-6' : 'bottom-3 top-8',
               marker.active
                 ? 'border-sky-200/80 bg-sky-300/30'
                 : 'border-sky-200/30 bg-sky-300/15 hover:bg-sky-300/25',
@@ -109,20 +122,34 @@ export function VideoTimeline({
         ))}
 
         <div
-          className="absolute bottom-3 top-8 h-auto w-0.5 bg-brand shadow-lg shadow-brand/50 transition-none"
+          className={cn(
+            'absolute h-auto w-0.5 bg-brand shadow-lg shadow-brand/50 transition-none',
+            compact ? 'bottom-2 top-6' : 'bottom-3 top-8',
+          )}
           style={{ left: `${progressPct}%` }}
         >
-          <div className="absolute -top-1 left-1/2 size-3 -translate-x-1/2 rounded-full bg-brand ring-2 ring-background" />
+          <div
+            className={cn(
+              'absolute left-1/2 -translate-x-1/2 rounded-full bg-brand ring-2 ring-background',
+              compact ? '-top-0.5 size-2.5' : '-top-1 size-3',
+            )}
+          />
         </div>
 
         {duration > 0 && (trimStartPct > 0 || trimEndPct < 100) && (
           <>
             <div
-              className="pointer-events-none absolute inset-y-8 left-0 rounded-l-md bg-black/50"
+              className={cn(
+                'pointer-events-none absolute left-0 rounded-l-md bg-black/50',
+                compact ? 'inset-y-6' : 'inset-y-8',
+              )}
               style={{ width: `${trimStartPct}%` }}
             />
             <div
-              className="pointer-events-none absolute inset-y-8 right-0 rounded-r-md bg-black/50"
+              className={cn(
+                'pointer-events-none absolute right-0 rounded-r-md bg-black/50',
+                compact ? 'inset-y-6' : 'inset-y-8',
+              )}
               style={{ width: `${100 - trimEndPct}%` }}
             />
           </>

@@ -11,7 +11,6 @@ import { Analytics } from '@vercel/analytics/next'
 import { ThemeProvider } from '@wrksz/themes/next'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { AppProvider } from '@/lib/app-context'
 import './globals.css'
 
 const _geist = Geist({ subsets: ['latin'] })
@@ -54,11 +53,9 @@ export default async function RootLayout({
             enableSystem={false}
             disableTransitionOnChange
           >
-            <AppProvider>
-              <TooltipProvider>
-                {children}
-              </TooltipProvider>
-            </AppProvider>
+            <TooltipProvider>
+              {children}
+            </TooltipProvider>
             <Toaster richColors position="top-center" />
           </ThemeProvider>
           <Analytics />

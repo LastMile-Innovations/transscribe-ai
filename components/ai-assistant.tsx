@@ -13,8 +13,10 @@ import {
   User,
   AlertCircle,
   X,
+  PanelRightClose,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { SheetClose } from '@/components/ui/sheet'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -421,7 +423,7 @@ export function AIAssistant() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <CardHeader className="shrink-0 gap-4 px-4 py-4">
+      <CardHeader className="shrink-0 gap-4 px-4 py-4 pr-14">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
             <div className="flex size-9 items-center justify-center rounded-xl border border-brand/20 bg-brand/15">
@@ -446,11 +448,19 @@ export function AIAssistant() {
               </div>
             </div>
           </div>
-          {!isEmpty && (
-            <Button variant="ghost" size="icon-sm" onClick={handleClear} className="size-8 rounded-full" aria-label="Clear assistant conversation">
-              <Trash2 className="size-3.5" />
-            </Button>
-          )}
+          <div className="flex shrink-0 items-center gap-1">
+            {!isEmpty && (
+              <Button variant="ghost" size="icon-sm" onClick={handleClear} className="size-8 rounded-full" aria-label="Clear assistant conversation">
+                <Trash2 className="size-3.5" />
+              </Button>
+            )}
+            <SheetClose asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 rounded-full px-2.5 text-xs" aria-label="Hide AI assistant">
+                <PanelRightClose className="size-3.5" />
+                Hide
+              </Button>
+            </SheetClose>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-xs xl:grid-cols-3">

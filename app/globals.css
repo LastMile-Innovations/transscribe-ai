@@ -39,6 +39,19 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* Editor / video preview surface (dark canvas in both themes for contrast) */
+  --editor-canvas: oklch(0.97 0.006 90);
+  --editor-chrome: oklch(0.99 0.004 95);
+  --editor-panel-bg: color-mix(in oklab, var(--card) 92%, var(--background));
+  --editor-panel-border: color-mix(in oklab, var(--border) 85%, transparent);
+  --editor-panel-shadow: 0 1px 2px color-mix(in oklab, var(--foreground) 6%, transparent);
+  --editor-video-bg: oklch(0.14 0.015 280);
+  --editor-video-surface: oklch(0.08 0.02 280);
+  --editor-video-border: color-mix(in oklab, white 14%, transparent);
+  --editor-video-chrome-fg: oklch(0.93 0.01 280);
+  --editor-video-chrome-muted: color-mix(in oklab, var(--editor-video-chrome-fg) 55%, transparent);
+  --editor-video-controls-bg: color-mix(in oklab, white 8%, transparent);
+  --editor-video-timeline-bg: color-mix(in oklab, black 35%, transparent);
 }
 
 .dark {
@@ -76,6 +89,18 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.269 0 0);
   --sidebar-ring: oklch(0.439 0 0);
+  --editor-canvas: color-mix(in oklab, var(--card) 88%, black);
+  --editor-chrome: color-mix(in oklab, var(--card) 94%, black);
+  --editor-panel-bg: color-mix(in oklab, var(--card) 90%, var(--background));
+  --editor-panel-border: color-mix(in oklab, var(--border) 90%, transparent);
+  --editor-panel-shadow: 0 1px 3px color-mix(in oklab, black 45%, transparent);
+  --editor-video-bg: oklch(0.16 0.012 32);
+  --editor-video-surface: oklch(0.1 0.015 32);
+  --editor-video-border: color-mix(in oklab, white 12%, transparent);
+  --editor-video-chrome-fg: oklch(0.94 0.01 80);
+  --editor-video-chrome-muted: color-mix(in oklab, var(--editor-video-chrome-fg) 50%, transparent);
+  --editor-video-controls-bg: color-mix(in oklab, white 7%, transparent);
+  --editor-video-timeline-bg: color-mix(in oklab, black 50%, transparent);
 }
 
 @theme inline {
@@ -119,6 +144,19 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-editor-canvas: var(--editor-canvas);
+  --color-editor-chrome: var(--editor-chrome);
+  --color-editor-panel-bg: var(--editor-panel-bg);
+  --color-editor-video-bg: var(--editor-video-bg);
+  --color-editor-video-surface: var(--editor-video-surface);
+}
+
+@layer components {
+  .editor-workspace-panel {
+    background: var(--editor-panel-bg);
+    border: 1px solid var(--editor-panel-border);
+    box-shadow: var(--editor-panel-shadow);
+  }
 }
 
 @layer base {

@@ -192,7 +192,7 @@ export function TranscriptToolbar({
               key={speaker.name}
               type="button"
               onClick={() => {
-                setSpeakerFilter((current) => (current === speaker.name ? null : speaker.name))
+                setSpeakerFilter(speakerFilter === speaker.name ? null : speaker.name)
               }}
               className={cn(
                 'rounded-full border px-3 py-1 transition-colors text-[11px]',
