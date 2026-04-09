@@ -4,19 +4,12 @@ import { useRef, useEffect, useCallback, useState } from 'react'
 import {
   Play,
   Pause,
-  Volume2,
-  VolumeX,
-  Maximize,
-  SkipBack,
-  SkipForward,
   Captions,
   Scissors,
   Keyboard,
 } from 'lucide-react'
 import { AspectRatio } from '@/components/ui/aspect-ratio'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { ButtonGroup } from '@/components/ui/button-group'
 import {
   Card,
   CardContent,
@@ -24,11 +17,11 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Kbd } from '@/components/ui/kbd'
-import { Separator } from '@/components/ui/separator'
-import { Slider } from '@/components/ui/slider'
 import { useAuthedFetch } from '@/lib/authed-fetch'
 import { useApp } from '@/lib/app-context'
 import { cn } from '@/lib/utils'
+import { VideoTimeline } from './video-timeline'
+import { VideoControls } from './video-controls'
 
 function formatTime(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000)
@@ -46,7 +39,7 @@ function waveBarHeight(index: number, total: number): number {
 
 const PLAYBACK_URL_REFRESH_BUFFER_MS = 5 * 60 * 1000
 
-export function VideoPlayer() {
+export function VideoPlayer({ layout = 'default' }: { layout?: 'default' | 'sidebar' }) {
   const authedFetch = useAuthedFetch()
   const { state, dispatch } = useApp()
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -59,7 +52,6 @@ export function VideoPlayer() {
 
   const project = state.projects.find((p) => p.id === state.activeProjectId)
   const duration = project?.duration ?? 0
-  const currentTime = state.playerTime
   const isPlaying = state.isPlaying
   const trimRange = state.trimRange
   const overlays = state.overlays
@@ -157,6 +149,17 @@ export function VideoPlayer() {
     }
   }, [dispatch, isPlaying, project?.fileUrl, project?.id, refreshPlaybackUrl])
 
+  const [localTime, setLocalTime] = useState(state.playerTime)
+  const lastGlobalSyncRef = useRef(state.playerTime)
+
+  // Sync local time when global time changes (e.g., from clicking a segment)
+  useEffect(() => {
+    if (Math.abs(state.playerTime - localTime) > 500) {
+      setLocalTime(state.playerTime)
+      lastGlobalSyncRef.current = state.playerTime
+    }
+  }, [state.playerTime, localTime])
+
   // Time update listener
   useEffect(() => {
     const video = videoRef.current
@@ -164,7 +167,13 @@ export function VideoPlayer() {
 
     const onTimeUpdate = () => {
       const ms = Math.round(video.currentTime * 1000)
-      dispatch({ type: 'SET_PLAYER_TIME', time: ms })
+      setLocalTime(ms)
+
+      // Throttle global state updates to ~500ms to reduce re-renders
+      if (Math.abs(ms - lastGlobalSyncRef.current) >= 500) {
+        dispatch({ type: 'SET_PLAYER_TIME', time: ms })
+        lastGlobalSyncRef.current = ms
+      }
 
       // Respect trim out-point
       if (trimRange && ms >= trimRange.end) {
@@ -172,6 +181,8 @@ export function VideoPlayer() {
         video.currentTime = (trimRange.start ?? 0) / 1000
         dispatch({ type: 'SET_PLAYING', isPlaying: false })
         dispatch({ type: 'SET_PLAYER_TIME', time: trimRange.start ?? 0 })
+        setLocalTime(trimRange.start ?? 0)
+        lastGlobalSyncRef.current = trimRange.start ?? 0
       }
     }
 
@@ -201,6 +212,8 @@ export function VideoPlayer() {
       if (!video) return
       const clamped = Math.max(trimRange?.start ?? 0, Math.min(trimRange?.end ?? duration, ms))
       video.currentTime = clamped / 1000
+      setLocalTime(clamped)
+      lastGlobalSyncRef.current = clamped
       dispatch({ type: 'SET_PLAYER_TIME', time: clamped })
     },
     [dispatch, duration, trimRange],
@@ -210,8 +223,8 @@ export function VideoPlayer() {
     dispatch({ type: 'SET_PLAYING', isPlaying: !isPlaying })
   }, [dispatch, isPlaying])
 
-  const skipBack = useCallback(() => seek(currentTime - 5000), [seek, currentTime])
-  const skipForward = useCallback(() => seek(currentTime + 5000), [seek, currentTime])
+  const skipBack = useCallback(() => seek(localTime - 5000), [seek, localTime])
+  const skipForward = useCallback(() => seek(localTime + 5000), [seek, localTime])
 
   const handleProgressClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
@@ -262,7 +275,7 @@ export function VideoPlayer() {
     }
 
     playbackRetryRef.current = true
-    const resumeTimeSec = currentTime / 1000
+    const resumeTimeSec = localTime / 1000
     const shouldResume = isPlaying
     const video = videoRef.current
 
@@ -294,28 +307,12 @@ export function VideoPlayer() {
       .catch(() => {
         dispatch({ type: 'SET_PLAYING', isPlaying: false })
       })
-  }, [currentTime, dispatch, isPlaying, project, refreshPlaybackUrl])
+  }, [localTime, dispatch, isPlaying, project, refreshPlaybackUrl])
 
   // Visible overlays at current time
   const visibleOverlays = overlays.filter(
-    (o) => currentTime >= o.startTime && currentTime <= o.endTime,
+    (o) => localTime >= o.startTime && localTime <= o.endTime,
   )
-
-  const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0
-  const trimStartPct = duration > 0 ? ((trimRange?.start ?? 0) / duration) * 100 : 0
-  const trimEndPct = duration > 0 ? ((trimRange?.end ?? duration) / duration) * 100 : 100
-
-  const WAVEFORM_BARS = 80
-  const overlayMarkerPositions = duration > 0
-    ? overlays.map((overlay) => ({
-        id: overlay.id,
-        left: (overlay.startTime / duration) * 100,
-        width: Math.max(1.5, ((overlay.endTime - overlay.startTime) / duration) * 100),
-        label: overlay.text.trim() || 'Overlay',
-        active: currentTime >= overlay.startTime && currentTime <= overlay.endTime,
-        startTime: overlay.startTime,
-      }))
-    : []
 
   return (
     <div
@@ -324,36 +321,50 @@ export function VideoPlayer() {
       onMouseLeave={() => isPlaying && setShowControls(false)}
       onTouchStart={handleTouch}
     >
-      <CardHeader className="shrink-0 gap-3 border-b border-white/10 bg-gradient-to-r from-white/6 via-white/3 to-transparent px-4 py-3 text-white/80">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="font-semibold tracking-[0.16em] uppercase text-white/45">Review Surface</p>
-            <CardTitle className="mt-1 text-sm text-white/90">{project?.title ?? 'Playback preview'}</CardTitle>
+      {layout === 'default' ? (
+        <CardHeader className="shrink-0 gap-3 border-b border-white/10 bg-gradient-to-r from-white/6 via-white/3 to-transparent px-4 py-3 text-white/80">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold tracking-[0.16em] uppercase text-white/45">Review Surface</p>
+              <CardTitle className="mt-1 text-sm text-white/90">{project?.title ?? 'Playback preview'}</CardTitle>
+            </div>
+            <div className="hidden items-center gap-2 md:flex">
+              <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
+                <Captions className="size-3.5" />
+                {visibleOverlays.length} overlays visible
+              </Badge>
+              <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
+                <Scissors className="size-3.5" />
+                {Math.max(0, trimRange?.end ?? duration) > 0 && trimRange
+                  ? `${formatTime(trimRange?.start ?? 0)} - ${formatTime(trimRange?.end ?? duration)}`
+                  : 'Full clip'}
+              </Badge>
+            </div>
           </div>
-          <div className="hidden items-center gap-2 md:flex">
+          <div className="flex flex-wrap items-center gap-2 md:hidden">
             <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
               <Captions className="size-3.5" />
-              {visibleOverlays.length} overlays visible
+              {visibleOverlays.length} overlays
             </Badge>
             <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
               <Scissors className="size-3.5" />
-              {Math.max(0, trimRange?.end ?? duration) > 0 && trimRange
-                ? `${formatTime(trimRange.start)} - ${formatTime(trimRange.end)}`
-                : 'Full clip'}
+              {trimRange ? 'Trim active' : 'Full clip'}
             </Badge>
           </div>
+        </CardHeader>
+      ) : (
+        <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-white/5 px-4 py-2 text-white/80">
+          <div className="truncate text-xs font-medium text-white/90">{project?.title ?? 'Playback preview'}</div>
+          <div className="flex shrink-0 items-center gap-2">
+            {trimRange && (
+              <Badge variant="outline" className="border-white/10 bg-white/6 text-[10px] text-white/80">
+                <Scissors className="size-3" />
+                Trimmed
+              </Badge>
+            )}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 md:hidden">
-          <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
-            <Captions className="size-3.5" />
-            {visibleOverlays.length} overlays
-          </Badge>
-          <Badge variant="outline" className="border-white/10 bg-white/6 text-white/80">
-            <Scissors className="size-3.5" />
-            {trimRange ? 'Trim active' : 'Full clip'}
-          </Badge>
-        </div>
-      </CardHeader>
+      )}
 
       <div className="relative flex-1 overflow-hidden px-4 py-4">
         <AspectRatio ratio={16 / 9} className="size-full overflow-hidden rounded-2xl border border-white/10 bg-black">
@@ -426,163 +437,29 @@ export function VideoPlayer() {
         'flex flex-col gap-3 border-t border-white/10 bg-black/88 px-4 py-4 transition-opacity duration-300',
         !showControls && isPlaying ? 'opacity-75' : 'opacity-100',
       )}>
-        <Card
-          className="group relative cursor-pointer gap-0 rounded-xl border border-white/10 bg-white/[0.03] py-0 shadow-none"
-          onClick={handleProgressClick}
-          onTouchEnd={handleProgressClick}
-        >
-          <CardHeader className="mb-0 flex-row items-center justify-between px-3 py-3 text-[11px] uppercase tracking-[0.16em] text-white/45">
-            <span>Timeline</span>
-            <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
-          </CardHeader>
+        <VideoTimeline
+          currentTime={localTime}
+          duration={duration}
+          trimRange={trimRange ?? null}
+          overlays={overlays}
+          seek={seek}
+          formatTime={formatTime}
+        />
 
-          <CardContent className="relative px-3 pb-3">
-          <div className="relative flex h-10 items-end gap-px overflow-hidden rounded-md">
-            {Array.from({ length: WAVEFORM_BARS }, (_, i) => {
-              const barPct = (i / WAVEFORM_BARS) * 100
-              const isInTrim = barPct >= trimStartPct && barPct <= trimEndPct
-              const isPast = barPct <= progressPct
-              return (
-                <div
-                  key={i}
-                  className="flex-1 rounded-t-sm transition-colors"
-                  style={{
-                    height: `${waveBarHeight(i, WAVEFORM_BARS) * 100}%`,
-                    backgroundColor: isPast
-                      ? isInTrim ? 'oklch(0.66 0.17 32)' : 'rgb(251 146 60 / 0.35)'
-                      : isInTrim ? 'rgb(255 255 255 / 0.28)' : 'rgb(255 255 255 / 0.08)',
-                  }}
-                />
-              )
-            })}
-          </div>
-
-          {overlayMarkerPositions.map((marker) => (
-            <button
-              key={marker.id}
-              type="button"
-              className={cn(
-                'absolute bottom-3 top-8 overflow-hidden rounded-sm border text-left text-[10px] leading-none text-white/80 transition-colors',
-                marker.active
-                  ? 'border-sky-200/80 bg-sky-300/30'
-                  : 'border-sky-200/30 bg-sky-300/15 hover:bg-sky-300/25',
-              )}
-              style={{ left: `${marker.left}%`, width: `${marker.width}%` }}
-              onClick={(e) => {
-                e.stopPropagation()
-                seek(marker.startTime)
-              }}
-              title={`${marker.label} at ${formatTime(marker.startTime)}`}
-              aria-label={`Seek to overlay ${marker.label}`}
-            >
-              <span className="block truncate px-1.5 pt-0.5">{marker.label}</span>
-            </button>
-          ))}
-
-          <div
-            className="absolute bottom-3 top-8 h-auto w-0.5 bg-brand shadow-lg shadow-brand/50 transition-none"
-            style={{ left: `${progressPct}%` }}
-          >
-            <div className="absolute -top-1 left-1/2 size-3 -translate-x-1/2 rounded-full bg-brand ring-2 ring-background" />
-          </div>
-
-          {duration > 0 && (trimStartPct > 0 || trimEndPct < 100) && (
-            <>
-              <div
-                className="pointer-events-none absolute inset-y-8 left-0 rounded-l-md bg-black/50"
-                style={{ width: `${trimStartPct}%` }}
-              />
-              <div
-                className="pointer-events-none absolute inset-y-8 right-0 rounded-r-md bg-black/50"
-                style={{ width: `${100 - trimEndPct}%` }}
-              />
-            </>
-          )}
-          </CardContent>
-        </Card>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <ButtonGroup className="rounded-full border border-white/10 bg-white/[0.05] p-1.5 backdrop-blur-md">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={skipBack}
-              className="size-10 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
-              aria-label="Skip back 5 seconds"
-            >
-              <SkipBack className="size-4" />
-            </Button>
-
-            <Button
-              size="icon"
-              onClick={togglePlay}
-              className="size-12 rounded-full bg-brand text-brand-foreground shadow-lg shadow-brand/20 transition-transform hover:scale-105 hover:bg-brand/90"
-              aria-label={isPlaying ? 'Pause playback' : 'Start playback'}
-            >
-              {isPlaying ? <Pause className="size-5" /> : <Play className="size-5 translate-x-0.5" />}
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={skipForward}
-              className="size-10 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
-              aria-label="Skip forward 5 seconds"
-            >
-              <SkipForward className="size-4" />
-            </Button>
-          </ButtonGroup>
-
-          <Card className="min-w-[11rem] gap-0 rounded-2xl border border-white/10 bg-white/[0.05] py-0 font-mono text-xs font-medium tracking-wider text-white/85 shadow-none">
-            <CardContent className="px-3 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <span>Current</span>
-                <span>{formatTime(currentTime)}</span>
-              </div>
-              <div className="mt-1 flex items-center justify-between gap-3 text-white/55">
-                <span>Duration</span>
-                <span>{formatTime(duration)}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="ml-auto gap-0 rounded-2xl border border-white/10 bg-white/[0.05] py-0 shadow-none backdrop-blur-md">
-            <CardContent className="flex items-center gap-2 px-2 py-2">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setMuted(!muted)}
-              className="size-10 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
-              aria-label={muted || volume === 0 ? 'Unmute video' : 'Mute video'}
-            >
-              {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-            </Button>
-            <div className="w-24 pr-3">
-              <Slider
-                min={0}
-                max={100}
-                step={1}
-                value={[muted ? 0 : volume]}
-                onValueChange={([v]) => {
-                  setVolume(v)
-                  setMuted(v === 0)
-                }}
-                className="[&_[data-slot=slider-range]]:bg-white [&_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-thumb]]:border-white hover:[&_[data-slot=slider-thumb]]:scale-110 transition-transform"
-              />
-            </div>
-            <Separator orientation="vertical" className="h-4 bg-white/20" />
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={fullscreen}
-              className="size-10 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
-              aria-label="Toggle fullscreen"
-            >
-              <Maximize className="size-4" />
-            </Button>
-            </CardContent>
-          </Card>
-        </div>
+        <VideoControls
+          isPlaying={isPlaying}
+          togglePlay={togglePlay}
+          skipBack={skipBack}
+          skipForward={skipForward}
+          currentTime={localTime}
+          duration={duration}
+          muted={muted}
+          setMuted={setMuted}
+          volume={volume}
+          setVolume={setVolume}
+          fullscreen={fullscreen}
+          formatTime={formatTime}
+        />
 
         <div className="flex flex-wrap items-center gap-2 text-[10px] text-white/45">
           <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-white/60">
