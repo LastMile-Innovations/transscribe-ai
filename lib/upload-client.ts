@@ -25,6 +25,63 @@ export type MultipartUploadPlan = {
 
 export type UploadPlan = SingleUploadPlan | MultipartUploadPlan
 
+const UPLOAD_XHR_MAX_ATTEMPTS = 4
+const UPLOAD_XHR_BASE_DELAY_MS = 800
+const UPLOAD_CANCELLED_MESSAGE = 'Upload cancelled.'
+
+class UploadHttpError extends Error {
+  readonly uploadHttpStatus: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'UploadHttpError'
+    this.uploadHttpStatus = status
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+function isTransientHttpStatus(status: number): boolean {
+  return status === 0 || status === 429 || (status >= 500 && status < 600)
+}
+
+function uploadHttpError(message: string, status: number): UploadHttpError {
+  return new UploadHttpError(message, status)
+}
+
+function shouldRetryAfterError(error: unknown): boolean {
+  if (!(error instanceof UploadHttpError)) return false
+  return isTransientHttpStatus(error.uploadHttpStatus)
+}
+
+async function runWithUploadRetries<T>(
+  isCancelled: () => boolean,
+  runOnce: () => Promise<T>,
+  onBeforeRetry?: () => void | Promise<void>,
+): Promise<T> {
+  let lastError: Error | undefined
+  for (let attempt = 0; attempt < UPLOAD_XHR_MAX_ATTEMPTS; attempt++) {
+    if (isCancelled()) throw new Error(UPLOAD_CANCELLED_MESSAGE)
+    if (attempt > 0) {
+      await onBeforeRetry?.()
+      await sleep(UPLOAD_XHR_BASE_DELAY_MS * 2 ** (attempt - 1))
+    }
+    try {
+      return await runOnce()
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error))
+      if (err.message === UPLOAD_CANCELLED_MESSAGE) throw err
+      lastError = err
+      if (!shouldRetryAfterError(error)) throw err
+    }
+  }
+  throw lastError ?? new Error('Upload failed after retries.')
+}
+
 export function createUploadProjectStub(input: {
   id: string
   workspaceProjectId: string
@@ -63,41 +120,55 @@ export function startPlannedUpload(input: {
 
   if (input.plan.uploadType === 'single') {
     const plan = input.plan
-    const xhr = new XMLHttpRequest()
-    const done = new Promise<void>((resolve, reject) => {
-      xhr.open('PUT', plan.signedUrl)
-      xhr.setRequestHeader('Content-Type', putContentType)
+    let activeXhr: XMLHttpRequest | null = null
+    let cancelled = false
 
-      xhr.upload.onprogress = (event) => {
-        if (!event.lengthComputable || event.total <= 0) return
-        input.onProgress(event.loaded, event.total)
-      }
+    const sendOnce = () =>
+      new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        activeXhr = xhr
+        xhr.open('PUT', plan.signedUrl)
+        xhr.setRequestHeader('Content-Type', putContentType)
 
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve()
-          return
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable || event.total <= 0) return
+          input.onProgress(event.loaded, event.total)
         }
-        reject(
-          new Error(
-            xhr.status
-              ? `Upload to storage failed (HTTP ${xhr.status}). Check file size and try again.`
-              : 'Upload to storage was rejected. Try again.',
-          ),
-        )
-      }
-      xhr.onerror = () => {
-        reject(new Error('Network error during upload. Check your connection and try again.'))
-      }
-      xhr.onabort = () => {
-        reject(new Error('Upload cancelled.'))
-      }
 
-      xhr.send(input.file)
-    })
+        xhr.onload = () => {
+          activeXhr = null
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve()
+            return
+          }
+          reject(
+            uploadHttpError(
+              xhr.status
+                ? `Upload to storage failed (HTTP ${xhr.status}). Check file size and try again.`
+                : 'Upload to storage was rejected. Try again.',
+              xhr.status,
+            ),
+          )
+        }
+        xhr.onerror = () => {
+          activeXhr = null
+          reject(uploadHttpError('Network error during upload. Check your connection and try again.', 0))
+        }
+        xhr.onabort = () => {
+          activeXhr = null
+          reject(new Error(UPLOAD_CANCELLED_MESSAGE))
+        }
+
+        xhr.send(input.file)
+      })
+
+    const done = runWithUploadRetries(() => cancelled, sendOnce)
 
     return {
-      abort: () => xhr.abort(),
+      abort: () => {
+        cancelled = true
+        activeXhr?.abort()
+      },
       done,
     }
   }
@@ -110,7 +181,8 @@ export function startPlannedUpload(input: {
   const uploadedParts = new Map<number, string>()
 
   const syncMultipartProgress = () => {
-    const loaded = Array.from(partLoadedBytes.values()).reduce((sum, value) => sum + value, 0)
+    let loaded = 0
+    for (const n of partLoadedBytes.values()) loaded += n
     input.onProgress(Math.min(loaded, input.file.size), input.file.size)
   }
 
@@ -122,63 +194,76 @@ export function startPlannedUpload(input: {
     activePartXhrs.clear()
   }
 
-  const uploadPart = (part: { partNumber: number; signedUrl: string }) =>
-    new Promise<string>((resolve, reject) => {
-      const start = (part.partNumber - 1) * plan.partSize
-      const end = Math.min(start + plan.partSize, input.file.size)
-      const chunk = input.file.slice(start, end)
-      const chunkSize = end - start
+  const uploadPart = (part: { partNumber: number; signedUrl: string }) => {
+    const start = (part.partNumber - 1) * plan.partSize
+    const end = Math.min(start + plan.partSize, input.file.size)
+    const chunk = input.file.slice(start, end)
+    const chunkSize = end - start
+    const partNo = part.partNumber
 
-      const xhr = new XMLHttpRequest()
-      activePartXhrs.set(part.partNumber, xhr)
-      xhr.open('PUT', part.signedUrl)
-      xhr.setRequestHeader('Content-Type', putContentType)
+    const sendPartOnce = () =>
+      new Promise<string>((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        activePartXhrs.set(partNo, xhr)
+        xhr.open('PUT', part.signedUrl)
+        xhr.setRequestHeader('Content-Type', putContentType)
 
-      xhr.upload.onprogress = (event) => {
-        const loaded = event.lengthComputable ? Math.min(event.loaded, chunkSize) : 0
-        partLoadedBytes.set(part.partNumber, loaded)
-        syncMultipartProgress()
-      }
-
-      xhr.onload = () => {
-        activePartXhrs.delete(part.partNumber)
-        if (xhr.status < 200 || xhr.status >= 300) {
-          reject(
-            new Error(
-              xhr.status
-                ? `Multipart upload failed on part ${part.partNumber} (HTTP ${xhr.status}).`
-                : `Multipart upload was rejected on part ${part.partNumber}.`,
-            ),
-          )
-          return
+        xhr.upload.onprogress = (event) => {
+          const loaded = event.lengthComputable ? Math.min(event.loaded, chunkSize) : 0
+          partLoadedBytes.set(partNo, loaded)
+          syncMultipartProgress()
         }
 
-        const etag = xhr.getResponseHeader('ETag')
-        if (!etag) {
-          reject(
-            new Error(
-              `Storage did not return an ETag for part ${part.partNumber}. Check bucket CORS to expose ETag.`,
-            ),
-          )
-          return
+        xhr.onload = () => {
+          activePartXhrs.delete(partNo)
+          if (xhr.status < 200 || xhr.status >= 300) {
+            reject(
+              uploadHttpError(
+                xhr.status
+                  ? `Multipart upload failed on part ${partNo} (HTTP ${xhr.status}).`
+                  : `Multipart upload was rejected on part ${partNo}.`,
+                xhr.status,
+              ),
+            )
+            return
+          }
+
+          const etagHeader = xhr.getResponseHeader('ETag')
+          if (!etagHeader) {
+            reject(
+              new Error(
+                `Storage did not return an ETag for part ${partNo}. Check bucket CORS to expose ETag.`,
+              ),
+            )
+            return
+          }
+
+          partLoadedBytes.set(partNo, chunkSize)
+          syncMultipartProgress()
+          resolve(etagHeader)
         }
 
-        partLoadedBytes.set(part.partNumber, chunkSize)
+        xhr.onerror = () => {
+          activePartXhrs.delete(partNo)
+          reject(uploadHttpError(`Network error during multipart upload (part ${partNo}).`, 0))
+        }
+        xhr.onabort = () => {
+          activePartXhrs.delete(partNo)
+          reject(new Error(UPLOAD_CANCELLED_MESSAGE))
+        }
+
+        xhr.send(chunk)
+      })
+
+    return runWithUploadRetries(
+      () => cancelled,
+      sendPartOnce,
+      async () => {
+        partLoadedBytes.delete(partNo)
         syncMultipartProgress()
-        resolve(etag)
-      }
-
-      xhr.onerror = () => {
-        activePartXhrs.delete(part.partNumber)
-        reject(new Error(`Network error during multipart upload (part ${part.partNumber}).`))
-      }
-      xhr.onabort = () => {
-        activePartXhrs.delete(part.partNumber)
-        reject(new Error('Upload cancelled.'))
-      }
-
-      xhr.send(chunk)
-    })
+      },
+    )
+  }
 
   const done = (async () => {
     try {
@@ -187,7 +272,7 @@ export function startPlannedUpload(input: {
 
       const runMultipartWorker = async () => {
         while (true) {
-          if (cancelled) throw new Error('Upload cancelled.')
+          if (cancelled) throw new Error(UPLOAD_CANCELLED_MESSAGE)
           const part = plan.parts[nextPartIndex++]
           if (!part) return
           const etag = await uploadPart(part)
@@ -196,14 +281,14 @@ export function startPlannedUpload(input: {
       }
 
       await Promise.all(Array.from({ length: maxParallelParts }, () => runMultipartWorker()))
-      if (cancelled) throw new Error('Upload cancelled.')
+      if (cancelled) throw new Error(UPLOAD_CANCELLED_MESSAGE)
 
       const completedParts = plan.parts
-        .map((part) => ({
-          ETag: uploadedParts.get(part.partNumber) ?? '',
-          PartNumber: part.partNumber,
+        .map((p) => ({
+          ETag: uploadedParts.get(p.partNumber) ?? '',
+          PartNumber: p.partNumber,
         }))
-        .filter((part) => part.ETag)
+        .filter((p) => p.ETag)
 
       if (completedParts.length !== plan.parts.length) {
         throw new Error('Multipart upload finished with missing parts.')

@@ -64,7 +64,8 @@ export function LibraryUploadDropzone({
 
         <p className="max-w-md text-pretty text-sm leading-relaxed text-muted-foreground">
           On a phone or tablet, you can usually pick several videos at once: look for &ldquo;Select&rdquo; or checkboxes,
-          then tap each video, then confirm.
+          then tap each video, then confirm. For large files, keep this tab in the foreground until the transfer finishes;
+          plug in if you can. iOS Low Power Mode may slow uploads.
         </p>
 
         <p className="text-sm leading-6 text-muted-foreground">

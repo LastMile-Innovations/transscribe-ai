@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import type { AppAction, BrowseFilter, VideoProject, WorkspaceTreeData } from '@/lib/types'
 import { errorMessageFromResponse } from '@/lib/api-error-message'
@@ -11,6 +11,7 @@ import { buildOriginalUploadKey } from '@/lib/media-keys'
 import { projectHasPreparedEdit } from '@/lib/project-prepare'
 import type { TranscriptionRequestOptions } from '@/lib/transcription-options'
 import { createUploadProjectStub, startPlannedUpload, type UploadHandle, type UploadPlan } from '@/lib/upload-client'
+import { uploadWakeLockAcquire, uploadWakeLockRelease } from '@/lib/upload-wake-lock'
 import { inferVideoContentType, isVideoFileCandidate } from '@/lib/video-upload-mime'
 
 type AuthedFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
@@ -35,6 +36,45 @@ export function useLibraryUploads({
   const queuedUploadsRef = useRef<
     Map<string, { cancel: () => void; persisted: boolean; cancelled: boolean }>
   >(new Map())
+  const uploadTransferCountRef = useRef(0)
+  const uploadBackgroundedDuringTransferRef = useRef(false)
+
+  const runWithUploadSession = useCallback(async (fn: () => Promise<void>) => {
+    uploadWakeLockAcquire()
+    uploadTransferCountRef.current += 1
+    try {
+      await fn()
+    } finally {
+      uploadTransferCountRef.current -= 1
+      uploadWakeLockRelease()
+    }
+  }, [])
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (uploadTransferCountRef.current > 0) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        if (uploadTransferCountRef.current > 0) uploadBackgroundedDuringTransferRef.current = true
+        return
+      }
+      if (!uploadBackgroundedDuringTransferRef.current) return
+      uploadBackgroundedDuringTransferRef.current = false
+      if (uploadTransferCountRef.current > 0) {
+        toast.info('Upload may have paused while you were away—check progress.', { duration: 6000 })
+      }
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [])
 
   const addProjectLocally = useCallback(
     (project: VideoProject) => {
@@ -348,60 +388,62 @@ export function useLibraryUploads({
       addProjectLocally(placeholderProject)
 
       const queuedTask = uploadQueueRef.current.enqueue(async () => {
-        updateProjectLocally(id, {
-          uploadQueueState: 'running',
-          mediaStep: 'upload',
-          feedbackError: undefined,
-          processingError: null,
-        })
+        await runWithUploadSession(async () => {
+          updateProjectLocally(id, {
+            uploadQueueState: 'running',
+            mediaStep: 'upload',
+            feedbackError: undefined,
+            processingError: null,
+          })
 
-        const preview = await extractLocalVideoPreview(file, id)
-        const queueEntry = queuedUploadsRef.current.get(id)
-        if (!queueEntry || queueEntry.cancelled) {
-          throw new Error('Upload cancelled.')
-        }
+          const preview = await extractLocalVideoPreview(file, id)
+          const queueEntry = queuedUploadsRef.current.get(id)
+          if (!queueEntry || queueEntry.cancelled) {
+            throw new Error('Upload cancelled.')
+          }
 
-        const uploadContentType = inferVideoContentType(file.name, file.type)
-        if (!uploadContentType) {
-          removeProjectLocally(id)
-          toast.error('This file does not look like a supported video. Try MP4, MOV, WebM, or AVI.')
-          return
-        }
+          const uploadContentType = inferVideoContentType(file.name, file.type)
+          if (!uploadContentType) {
+            removeProjectLocally(id)
+            toast.error('This file does not look like a supported video. Try MP4, MOV, WebM, or AVI.')
+            return
+          }
 
-        const clientCapture = buildClientMediaCapture(
-          file,
-          preview.videoWidth > 0 && preview.videoHeight > 0
-            ? {
-                videoWidth: preview.videoWidth,
-                videoHeight: preview.videoHeight,
-                durationMs: preview.duration,
-              }
-            : undefined,
-          { uploadContentType },
-        )
+          const clientCapture = buildClientMediaCapture(
+            file,
+            preview.videoWidth > 0 && preview.videoHeight > 0
+              ? {
+                  videoWidth: preview.videoWidth,
+                  videoHeight: preview.videoHeight,
+                  durationMs: preview.duration,
+                }
+              : undefined,
+            { uploadContentType },
+          )
 
-        const project = {
-          ...placeholderProject,
-          duration: preview.duration,
-          thumbnailUrl: preview.thumbnailUrl,
-          uploadQueueState: 'running' as const,
-          mediaStep: 'upload' as const,
-        }
+          const project = {
+            ...placeholderProject,
+            duration: preview.duration,
+            thumbnailUrl: preview.thumbnailUrl,
+            uploadQueueState: 'running' as const,
+            mediaStep: 'upload' as const,
+          }
 
-        updateProjectLocally(id, {
-          duration: preview.duration,
-          thumbnailUrl: preview.thumbnailUrl,
-          uploadQueueState: 'running',
-          mediaStep: 'upload',
-        })
+          updateProjectLocally(id, {
+            duration: preview.duration,
+            thumbnailUrl: preview.thumbnailUrl,
+            uploadQueueState: 'running',
+            mediaStep: 'upload',
+          })
 
-        await runQueuedUpload({
-          file,
-          contentType: uploadContentType,
-          project,
-          originalKey,
-          clientCapture,
-          transcriptionOptions: pendingAutoTranscriptionOptions,
+          await runQueuedUpload({
+            file,
+            contentType: uploadContentType,
+            project,
+            originalKey,
+            clientCapture,
+            transcriptionOptions: pendingAutoTranscriptionOptions,
+          })
         })
       })
       queuedUploadsRef.current.set(id, {
@@ -420,7 +462,15 @@ export function useLibraryUploads({
         console.error('Queued upload task failed unexpectedly:', error)
       })
     },
-    [addProjectLocally, browseFilter, removeProjectLocally, runQueuedUpload, updateProjectLocally, wpId],
+    [
+      addProjectLocally,
+      browseFilter,
+      removeProjectLocally,
+      runQueuedUpload,
+      runWithUploadSession,
+      updateProjectLocally,
+      wpId,
+    ],
   )
 
   const handleFiles = useCallback(
@@ -450,10 +500,16 @@ export function useLibraryUploads({
         toast.warning(`Skipped ${files.length - validFiles.length} files that are not supported videos.`)
       }
 
+      const mobileHint =
+        'Keep this tab open and in the foreground for large files; plug in if you can. On iOS, Low Power Mode may slow uploads. We keep your screen awake while transferring when the browser allows.'
+
       if (validFiles.length > 1) {
-        toast.info(`Preparing ${validFiles.length} uploads (up to 2 at a time)…`)
+        toast.info(`Preparing ${validFiles.length} uploads (up to 2 at a time)…`, {
+          description: mobileHint,
+          duration: 10_000,
+        })
       } else {
-        toast.info('Preparing upload…')
+        toast.info('Preparing upload…', { description: mobileHint, duration: 10_000 })
       }
 
       const pendingAutoTranscriptionOptions = options.autoTranscribe ? options.getTranscriptionOptions() : null
