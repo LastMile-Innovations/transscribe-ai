@@ -110,6 +110,10 @@ export const projects = pgTable(
     pendingClientCapture: jsonb('pending_client_capture').$type<ClientMediaCapture | null>(),
     pendingAutoTranscriptionOptions: jsonb('pending_auto_transcription_options')
       .$type<TranscriptionRequestOptions | null>(),
+    activeTranscriptId: uuid('active_transcript_id').references(
+      (): AnyPgColumn => transcripts.id,
+      { onDelete: 'set null' },
+    ),
     workspaceProjectId: text('workspace_project_id')
       .notNull()
       .references(() => workspaceProjects.id, { onDelete: 'cascade' }),

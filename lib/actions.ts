@@ -1,6 +1,13 @@
 'use server'
 
+import { clerkClient } from '@clerk/nextjs/server'
 import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { parseClientMediaCaptureFromJson } from './client-media-capture'
+import {
+  clerkUserToMemberEnrichment,
+  normalizeEmail,
+  resolveUserIdFromNormalizedEmail,
+} from './clerk-workspace-members'
 import { db } from './db'
 import {
   projectRowToVideoProject,
@@ -8,12 +15,18 @@ import {
   transcriptSegmentRowToSegment,
 } from './db/mappers'
 import {
+  countOwnersInWorkspace,
+  deleteWorkspaceMember,
   findFolderById,
+  findMembership,
   findProjectIdForSegment,
   insertFolder,
+  insertWorkspaceMember,
   insertWorkspaceProjectWithOwner,
   isParentFolderValidForWorkspace,
+  listMembersForWorkspace,
   updateFolderName,
+  updateWorkspaceMemberRole,
   updateWorkspaceProjectName,
 } from './db/queries'
 import {
@@ -24,14 +37,21 @@ import {
   transcripts,
   textOverlays,
 } from './db/schema'
-import { kickPrepareWorker } from './project-prepare-worker'
-import { withAccessibleMediaUrls } from './s3-storage'
-import type { TextOverlay, Transcript, TranscriptSummary, VideoProject } from './types'
+import type { WorkspaceMemberRole } from './db/schema'
+import { storageObjectKeysToDeleteForProject } from './media-keys'
+import { enqueueProjectPreparation, kickPrepareWorker } from './project-prepare-worker'
+import { deleteStorageObjectsByKeys, withAccessibleMediaUrls } from './s3-storage'
+import type { TextOverlay, Transcript, TranscriptSummary, VideoProject, WorkspaceProject } from './types'
 import {
   mergeTranscriptSegments,
   renameSpeakerInSegments,
   splitTranscriptSegment,
 } from './transcript-editing'
+import {
+  normalizeTranscriptionOptions,
+  validateTranscriptionOptions,
+  type TranscriptionRequestOptions,
+} from './transcription-options'
 import {
   assertProjectAccess,
   assertWorkspaceAccess,
@@ -123,7 +143,11 @@ export async function createWorkspaceProjectAction(name: string) {
   if (!userId) throw new Error('Unauthorized')
   const id = `wp-${Date.now()}`
   const trimmed = name.trim() || 'Untitled project'
-  return insertWorkspaceProjectWithOwner({ id, name: trimmed }, userId)
+  const row = await insertWorkspaceProjectWithOwner({ id, name: trimmed }, userId)
+  return {
+    ...row,
+    createdAt: row.createdAt instanceof Date ? row.createdAt : new Date(row.createdAt),
+  } satisfies WorkspaceProject
 }
 
 export async function createFolderAction(input: {
@@ -168,6 +192,7 @@ export async function deleteFolderAction(folderId: string) {
   await assertWorkspaceAccess(folder.workspaceProjectId, 'editor')
 
   await db.delete(folders).where(eq(folders.id, folderId))
+  return { ok: true as const, folderId }
 }
 
 export async function renameWorkspaceProjectAction(workspaceId: string, name: string) {
@@ -188,7 +213,217 @@ export async function moveMediaToFolderAction(mediaId: string, folderId: string 
     if (pRows.length === 0) throw new Error('Media not found')
     if (pRows[0].workspaceProjectId !== f.workspaceProjectId) throw new Error('Folder not in same workspace')
   }
-  await db.update(projects).set({ folderId }).where(eq(projects.id, mediaId))
+  const [row] = await db.update(projects).set({ folderId }).where(eq(projects.id, mediaId)).returning()
+  if (!row) throw new Error('Media not found')
+  return withAccessibleMediaUrls(projectRowToVideoProject(row))
+}
+
+export async function renameProjectAction(projectId: string, title: string) {
+  await assertProjectAccess(projectId, 'editor')
+  const trimmed = title.trim()
+  if (!trimmed) throw new Error('Name required')
+
+  const [row] = await db
+    .update(projects)
+    .set({ title: trimmed })
+    .where(eq(projects.id, projectId))
+    .returning()
+
+  if (!row) throw new Error('Project not found')
+  return withAccessibleMediaUrls(projectRowToVideoProject(row))
+}
+
+export async function deleteProjectAction(projectId: string) {
+  await assertProjectAccess(projectId, 'editor')
+
+  const rows = await db.select().from(projects).where(eq(projects.id, projectId)).limit(1)
+  const project = rows[0]
+  if (!project) throw new Error('Project not found')
+
+  const keys = storageObjectKeysToDeleteForProject(project)
+  await db.delete(projects).where(eq(projects.id, projectId))
+  await deleteStorageObjectsByKeys(keys)
+  return { ok: true as const, projectId }
+}
+
+async function listWorkspaceMembersData(workspaceId: string) {
+  const members = await listMembersForWorkspace(workspaceId)
+  const ids = members.map((m) => m.userId)
+  if (ids.length === 0) return []
+
+  const clerk = await clerkClient()
+  const { data: clerkUsers } = await clerk.users.getUserList({
+    userId: ids,
+    limit: Math.min(500, Math.max(ids.length, 1)),
+  })
+  const byId = new Map(clerkUsers.map((u) => [u.id, u]))
+
+  return members.map((m) => {
+    const u = byId.get(m.userId)
+    if (!u) {
+      return {
+        ...m,
+        createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : String(m.createdAt),
+        email: null as string | null,
+        displayName: null as string | null,
+        imageUrl: null as string | null,
+      }
+    }
+    const extra = clerkUserToMemberEnrichment(u)
+    return {
+      ...m,
+      createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : String(m.createdAt),
+      email: extra.email,
+      displayName: extra.displayName,
+      imageUrl: extra.imageUrl,
+    }
+  })
+}
+
+export async function listWorkspaceMembersAction(workspaceId: string) {
+  await assertWorkspaceAccess(workspaceId, 'viewer')
+  return listWorkspaceMembersData(workspaceId)
+}
+
+export async function addWorkspaceMemberAction(input: {
+  workspaceId: string
+  userId?: string
+  email?: string
+  role: 'editor' | 'viewer'
+}) {
+  await assertWorkspaceAccess(input.workspaceId, 'owner')
+
+  const userIdRaw = typeof input.userId === 'string' ? input.userId.trim() : ''
+  const emailRaw = typeof input.email === 'string' ? input.email.trim() : ''
+  const role: WorkspaceMemberRole = input.role === 'viewer' ? 'viewer' : 'editor'
+
+  let newUserId = ''
+  if (userIdRaw && emailRaw) {
+    throw new Error('Provide either userId or email, not both')
+  }
+  if (emailRaw) {
+    const normalized = normalizeEmail(emailRaw)
+    if (!normalized.includes('@')) {
+      throw new Error('Invalid email')
+    }
+    const clerk = await clerkClient()
+    const resolved = await resolveUserIdFromNormalizedEmail(clerk, normalized)
+    if (!resolved.ok) {
+      throw new Error(resolved.message)
+    }
+    newUserId = resolved.userId
+  } else if (userIdRaw) {
+    newUserId = userIdRaw
+  } else {
+    throw new Error('userId or email required')
+  }
+
+  const existing = await findMembership(newUserId, input.workspaceId)
+  if (existing) {
+    throw new Error('User is already a member')
+  }
+
+  await insertWorkspaceMember({
+    workspaceProjectId: input.workspaceId,
+    userId: newUserId,
+    role,
+  })
+  return listWorkspaceMembersData(input.workspaceId)
+}
+
+export async function removeWorkspaceMemberAction(workspaceId: string, targetUserId: string) {
+  const authUserId = await getAuthUserId()
+  if (!authUserId) throw new Error('Unauthorized')
+
+  const requesterMembership = await findMembership(authUserId, workspaceId)
+  if (!requesterMembership) throw new Error('Forbidden')
+
+  const decodedTarget = decodeURIComponent(targetUserId)
+  const isSelf = decodedTarget === authUserId
+  const isOwner = requesterMembership.role === 'owner'
+  if (!isSelf && !isOwner) {
+    throw new Error('Forbidden')
+  }
+
+  const targetMember = await findMembership(decodedTarget, workspaceId)
+  if (!targetMember) {
+    throw new Error('Member not found')
+  }
+
+  if (targetMember.role === 'owner') {
+    const owners = await countOwnersInWorkspace(workspaceId)
+    if (owners <= 1) {
+      throw new Error('Cannot remove the last owner')
+    }
+  }
+
+  await deleteWorkspaceMember(workspaceId, decodedTarget)
+  return listWorkspaceMembersData(workspaceId)
+}
+
+export async function updateWorkspaceMemberRoleAction(
+  workspaceId: string,
+  targetUserId: string,
+  role: 'owner' | 'editor' | 'viewer',
+) {
+  await assertWorkspaceAccess(workspaceId, 'owner')
+
+  const nextRole: WorkspaceMemberRole = role
+  const decodedTarget = decodeURIComponent(targetUserId)
+  const current = await findMembership(decodedTarget, workspaceId)
+  if (!current) {
+    throw new Error('Member not found')
+  }
+
+  if (current.role === 'owner' && nextRole !== 'owner') {
+    const owners = await countOwnersInWorkspace(workspaceId)
+    if (owners <= 1) {
+      throw new Error('Cannot demote the last owner')
+    }
+  }
+
+  const row = await updateWorkspaceMemberRole(workspaceId, decodedTarget, nextRole)
+  if (!row) throw new Error('Member not found')
+  return listWorkspaceMembersData(workspaceId)
+}
+
+export async function queueProjectPreparationAction(input: {
+  projectId: string
+  originalKey: string
+  clientCapture?: unknown
+  transcriptionOptions?: TranscriptionRequestOptions | null
+}) {
+  await assertProjectAccess(input.projectId, 'editor')
+
+  const projRows = await db.select().from(projects).where(eq(projects.id, input.projectId)).limit(1)
+  const project = projRows[0]
+  if (!project) throw new Error('Project not found')
+
+  const clientCapture = parseClientMediaCaptureFromJson(input.clientCapture)
+  const transcriptionOptions =
+    input.transcriptionOptions === undefined
+      ? null
+      : input.transcriptionOptions === null
+        ? null
+        : normalizeTranscriptionOptions(input.transcriptionOptions)
+  const transcriptionValidationError =
+    transcriptionOptions == null ? null : validateTranscriptionOptions(transcriptionOptions)
+  if (transcriptionValidationError) {
+    throw new Error(transcriptionValidationError)
+  }
+
+  const updated = await enqueueProjectPreparation({
+    project,
+    originalKey: input.originalKey,
+    clientCapture,
+    transcriptionOptions,
+  })
+
+  void kickPrepareWorker().catch((error) => {
+    console.error('queueProjectPreparationAction worker kick failed:', error)
+  })
+
+  return withAccessibleMediaUrls(projectRowToVideoProject(updated))
 }
 
 export type SegmentUpdateInput = {

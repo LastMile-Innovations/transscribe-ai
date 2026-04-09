@@ -78,6 +78,13 @@
       "when": 1775690400000,
       "tag": "0010_pending_auto_transcription_options",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1775691000000,
+      "tag": "0011_projects_active_transcript_id",
+      "breakpoints": true
     }
   ]
 }

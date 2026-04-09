@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useReducer, type Dispatch } from 'react'
 import type { AppState, AppAction, TranscriptSegment } from './types'
 // ─── Initial State ────────────────────────────────────────────────────────────
-const initialState: AppState = {
+export const initialAppState: AppState = {
   projects: [],
   activeProjectId: null,
   transcript: null,
@@ -186,8 +186,26 @@ interface AppContextValue {
 
 const AppContext = createContext<AppContextValue | null>(null)
 
-export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(appReducer, initialState)
+function buildInitialState(initialState?: Partial<AppState>): AppState {
+  const transcript = initialState?.transcript ?? initialAppState.transcript
+  return {
+    ...initialAppState,
+    ...initialState,
+    transcript,
+    trimRange:
+      initialState?.trimRange ??
+      (transcript ? { start: 0, end: transcript.totalDuration } : initialAppState.trimRange),
+  }
+}
+
+export function AppProvider({
+  children,
+  initialState,
+}: {
+  children: React.ReactNode
+  initialState?: Partial<AppState>
+}) {
+  const [state, dispatch] = useReducer(appReducer, initialState, buildInitialState)
   return (
     <AppContext.Provider value={{ state, dispatch }}>
       {children}

@@ -1,8 +1,13 @@
 import { AssemblyAI } from 'assemblyai'
-import { eq } from 'drizzle-orm'
+import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { findProjectById } from '@/lib/db/queries'
-import { projects, transcripts, type ProjectRow } from '@/lib/db/schema'
+import {
+  projects,
+  transcripts,
+  type ProjectRow,
+  type ProjectStatus,
+  type TranscriptRow,
+} from '@/lib/db/schema'
 import { transcriptionProgressFromAssemblyStatus } from '@/lib/assemblyai-transcript-sync'
 import { buildEditObjectKey } from '@/lib/media-keys'
 import { projectHasPreparedEdit } from '@/lib/project-prepare'
@@ -40,6 +45,39 @@ export type SubmitProjectTranscriptionResult = {
   normalizedOptions: TranscriptionRequestOptions
 }
 
+export const TRANSCRIPTION_START_STALE_AFTER_MS = 2 * 60 * 1000
+
+export function isTranscriptionStartReservationStale(
+  createdAt: Date | null | undefined,
+  now = Date.now(),
+  staleAfterMs = TRANSCRIPTION_START_STALE_AFTER_MS,
+): boolean {
+  if (!createdAt) return true
+  return now - createdAt.getTime() >= staleAfterMs
+}
+
+export function activeTranscriptionReservationDisposition(input: {
+  projectStatus: ProjectStatus
+  activeTranscriptId: string | null
+  transcript: Pick<TranscriptRow, 'assemblyAiTranscriptId' | 'createdAt'> | null
+  now?: number
+  staleAfterMs?: number
+}): 'none' | 'reuse' | 'wait' | 'cleanup' {
+  if (!input.activeTranscriptId) {
+    return input.projectStatus === 'transcribing' && input.transcript?.assemblyAiTranscriptId ? 'reuse' : 'none'
+  }
+  if (input.transcript?.assemblyAiTranscriptId) {
+    return input.projectStatus === 'transcribing' ? 'reuse' : 'cleanup'
+  }
+  if (
+    input.transcript &&
+    !isTranscriptionStartReservationStale(input.transcript.createdAt, input.now, input.staleAfterMs)
+  ) {
+    return 'wait'
+  }
+  return 'cleanup'
+}
+
 function resolveEditKey(project: Pick<ProjectRow, 'id' | 'workspaceProjectId' | 'status' | 'mediaMetadata'>) {
   const hasPreparedAsset =
     projectHasPreparedEdit(project) ||
@@ -51,6 +89,165 @@ function resolveEditKey(project: Pick<ProjectRow, 'id' | 'workspaceProjectId' | 
   }
 
   return project.mediaMetadata?.editKey ?? buildEditObjectKey(project.workspaceProjectId, project.id)
+}
+
+type ReservedTranscriptionStart =
+  | {
+      kind: 'existing'
+      transcriptId: string
+      assemblyAiId: string
+    }
+  | {
+      kind: 'reserved'
+      project: ProjectRow
+      transcriptId: string
+    }
+
+async function reserveProjectTranscriptionStart(input: {
+  projectId: string
+  project?: ProjectRow | null
+  label: string | null
+}): Promise<ReservedTranscriptionStart> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select id from projects where id = ${input.projectId} for update`)
+
+    const lockedProject =
+      input.project ??
+      (
+        await tx.select().from(projects).where(eq(projects.id, input.projectId)).limit(1)
+      )[0] ??
+      null
+
+    if (!lockedProject) {
+      throw new ProjectTranscriptionStartError('Project not found', 404)
+    }
+
+    let activeTranscript: TranscriptRow | null = null
+    if (lockedProject.activeTranscriptId) {
+      activeTranscript =
+        (
+          await tx
+            .select()
+            .from(transcripts)
+            .where(eq(transcripts.id, lockedProject.activeTranscriptId))
+            .limit(1)
+        )[0] ?? null
+    } else if (lockedProject.status === 'transcribing') {
+      activeTranscript =
+        (
+          await tx
+            .select()
+            .from(transcripts)
+            .where(
+              and(
+                eq(transcripts.projectId, lockedProject.id),
+                eq(transcripts.totalDuration, 0),
+              ),
+            )
+            .orderBy(desc(transcripts.createdAt))
+            .limit(1)
+        )[0] ?? null
+    }
+
+    const disposition = activeTranscriptionReservationDisposition({
+      projectStatus: lockedProject.status,
+      activeTranscriptId: lockedProject.activeTranscriptId ?? null,
+      transcript: activeTranscript,
+    })
+
+    if (disposition === 'reuse' && activeTranscript?.assemblyAiTranscriptId) {
+      return {
+        kind: 'existing',
+        transcriptId: activeTranscript.id,
+        assemblyAiId: activeTranscript.assemblyAiTranscriptId,
+      }
+    }
+
+    if (disposition === 'wait') {
+      throw new ProjectTranscriptionStartError(
+        'A transcription start is already in progress. Try again in a moment.',
+        409,
+      )
+    }
+
+    if (disposition === 'cleanup') {
+      if (lockedProject.activeTranscriptId) {
+        await tx
+          .update(projects)
+          .set({ activeTranscriptId: null })
+          .where(eq(projects.id, lockedProject.id))
+      }
+      if (activeTranscript) {
+        await tx.delete(transcripts).where(eq(transcripts.id, activeTranscript.id))
+      }
+    }
+
+    const [placeholder] = await tx
+      .insert(transcripts)
+      .values({
+        projectId: lockedProject.id,
+        language: 'en',
+        totalDuration: 0,
+        label: input.label,
+      })
+      .returning()
+
+    await tx
+      .update(projects)
+      .set({ activeTranscriptId: placeholder.id })
+      .where(eq(projects.id, lockedProject.id))
+
+    return {
+      kind: 'reserved',
+      project: lockedProject,
+      transcriptId: placeholder.id,
+    }
+  })
+}
+
+async function clearReservedTranscriptionStart(projectId: string, transcriptId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select id from projects where id = ${projectId} for update`)
+    await tx
+      .update(projects)
+      .set({ activeTranscriptId: null })
+      .where(and(eq(projects.id, projectId), eq(projects.activeTranscriptId, transcriptId)))
+    await tx.delete(transcripts).where(eq(transcripts.id, transcriptId))
+  })
+}
+
+async function persistSubmittedTranscriptId(transcriptId: string, assemblyAiTranscriptId: string): Promise<void> {
+  const [updated] = await db
+    .update(transcripts)
+    .set({ assemblyAiTranscriptId })
+    .where(and(eq(transcripts.id, transcriptId), isNull(transcripts.assemblyAiTranscriptId)))
+    .returning({ id: transcripts.id })
+
+  if (!updated) {
+    throw new ProjectTranscriptionStartError(
+      'Could not persist the AssemblyAI job locally after it was accepted.',
+      500,
+    )
+  }
+}
+
+async function activateProjectTranscription(input: {
+  projectId: string
+  transcriptId: string
+  transcriptionProgress: number
+  clearPendingAutoTranscription?: boolean
+}): Promise<void> {
+  await db
+    .update(projects)
+    .set({
+      status: 'transcribing',
+      transcriptionProgress: input.transcriptionProgress,
+      processingError: null,
+      ...(input.clearPendingAutoTranscription
+        ? { pendingAutoTranscriptionOptions: null }
+        : {}),
+    })
+    .where(and(eq(projects.id, input.projectId), eq(projects.activeTranscriptId, input.transcriptId)))
 }
 
 export async function submitProjectTranscription(input: {
@@ -71,11 +268,26 @@ export async function submitProjectTranscription(input: {
       throw new ProjectTranscriptionStartError('Missing AssemblyAI API key', 500)
     }
 
-    const project = input.project ?? (await findProjectById(input.projectId))
-    if (!project) {
-      throw new ProjectTranscriptionStartError('Project not found', 404)
+    const label =
+      normalizedOptions.transcriptLabel && normalizedOptions.transcriptLabel !== ''
+        ? normalizedOptions.transcriptLabel
+        : null
+    const reserved = await reserveProjectTranscriptionStart({
+      projectId: input.projectId,
+      project: input.project,
+      label,
+    })
+
+    if (reserved.kind === 'existing') {
+      return {
+        assemblyAiId: reserved.assemblyAiId,
+        transcriptId: reserved.transcriptId,
+        status: 'queued',
+        normalizedOptions,
+      }
     }
 
+    const project = reserved.project
     const editKey = resolveEditKey(project)
     const urlMode = transcriptionObjectUrlMode()
     const presignExpires = Number(process.env.MINIO_TRANSCRIPTION_PRESIGN_EXPIRES_SEC) || 172800
@@ -202,38 +414,36 @@ export async function submitProjectTranscription(input: {
       ]
     }
 
-    const submitted = await client.transcripts.submit(params as never)
-    const label =
-      normalizedOptions.transcriptLabel && normalizedOptions.transcriptLabel !== ''
-        ? normalizedOptions.transcriptLabel
-        : null
+    let submitted: Awaited<ReturnType<typeof client.transcripts.submit>>
+    try {
+      submitted = await client.transcripts.submit(params as never)
+    } catch (error) {
+      await clearReservedTranscriptionStart(project.id, reserved.transcriptId).catch(() => undefined)
+      throw error
+    }
 
-    const [pendingRow] = await db
-      .insert(transcripts)
-      .values({
-        projectId: project.id,
-        language: 'en',
-        totalDuration: 0,
-        assemblyAiTranscriptId: submitted.id,
-        label,
+    try {
+      await persistSubmittedTranscriptId(reserved.transcriptId, submitted.id)
+    } catch (error) {
+      await client.transcripts.delete(submitted.id).catch((deleteError) => {
+        console.error('Failed to delete AssemblyAI transcript after local persist failure:', deleteError)
       })
-      .returning()
+      await clearReservedTranscriptionStart(project.id, reserved.transcriptId).catch(() => undefined)
+      throw error
+    }
 
-    await db
-      .update(projects)
-      .set({
-        status: 'transcribing',
-        transcriptionProgress: transcriptionProgressFromAssemblyStatus(submitted.status),
-        processingError: null,
-        ...(input.clearPendingAutoTranscription
-          ? { pendingAutoTranscriptionOptions: null }
-          : {}),
-      })
-      .where(eq(projects.id, project.id))
+    await activateProjectTranscription({
+      projectId: project.id,
+      transcriptId: reserved.transcriptId,
+      transcriptionProgress: transcriptionProgressFromAssemblyStatus(submitted.status),
+      clearPendingAutoTranscription: input.clearPendingAutoTranscription,
+    }).catch((error) => {
+      console.error('Failed to persist transcribing project state:', error)
+    })
 
     return {
       assemblyAiId: submitted.id,
-      transcriptId: pendingRow.id,
+      transcriptId: reserved.transcriptId,
       status: submitted.status,
       normalizedOptions,
     }

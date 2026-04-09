@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
@@ -61,7 +61,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useAuthedFetch } from '@/lib/authed-fetch'
 import { useApp } from '@/lib/app-context'
-import { getProjectData, listTranscriptsForMediaAction } from '@/lib/actions'
+import { getProjectData, listTranscriptsForMediaAction, renameProjectAction } from '@/lib/actions'
 import { preferredDurationMs, resolutionLabel } from '@/lib/media-metadata'
 import { runTranscriptionFlow } from '@/lib/transcription-client'
 import { DEFAULT_TRANSCRIPTION_OPTIONS } from '@/lib/transcription-options'
@@ -245,14 +245,20 @@ function MediaMetadataDialog({
   )
 }
 
-export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
+export function TopBar({
+  onOpenAi,
+  initialTranscriptList = [],
+}: {
+  onOpenAi?: () => void
+  initialTranscriptList?: TranscriptSummary[]
+}) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const authedFetch = useAuthedFetch()
   const { state, dispatch } = useApp()
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState('')
-  const [transcriptList, setTranscriptList] = useState<TranscriptSummary[]>([])
+  const [transcriptList, setTranscriptList] = useState<TranscriptSummary[]>(initialTranscriptList)
   const [listLoading, setListLoading] = useState(false)
   const [newDialogOpen, setNewDialogOpen] = useState(false)
   const [newLabel, setNewLabel] = useState('')
@@ -263,12 +269,17 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
   const [rerunLanguageDetection, setRerunLanguageDetection] = useState(
     DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection,
   )
+  const transcriptListBootstrappedRef = useRef(true)
 
   const project = state.projects.find((p) => p.id === state.activeProjectId)
   const mediaId = project?.id
 
   useEffect(() => {
     if (!mediaId) return
+    if (transcriptListBootstrappedRef.current) {
+      transcriptListBootstrappedRef.current = false
+      return
+    }
     const safeId = mediaId
     let cancelled = false
     async function load() {
@@ -417,13 +428,8 @@ export function TopBar({ onOpenAi }: { onOpenAi?: () => void }) {
       return
     }
     try {
-      const res = await authedFetch(`/api/projects/${project.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: trimmed }),
-      })
-      if (!res.ok) throw new Error('save failed')
-      dispatch({ type: 'UPDATE_PROJECT', id: project.id, updates: { title: trimmed } })
+      const updated = await renameProjectAction(project.id, trimmed)
+      dispatch({ type: 'UPDATE_PROJECT', id: project.id, updates: { title: updated.title } })
       toast.success('Project renamed.')
     } catch {
       toast.error('Could not save name.')
