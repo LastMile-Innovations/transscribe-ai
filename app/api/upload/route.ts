@@ -6,6 +6,7 @@ import {
   presignPutObject,
   shouldUseMultipartUpload,
 } from '@/lib/s3-storage'
+import { inferVideoContentType, objectKeyBasename } from '@/lib/video-upload-mime'
 import { isUploadKeyForWorkspace, requireWorkspaceAccessForRoute } from '@/lib/workspace-access'
 
 export async function POST(request: Request) {
@@ -19,7 +20,16 @@ export async function POST(request: Request) {
     if (!filename || !contentType) {
       return NextResponse.json({ error: 'Missing filename or contentType' }, { status: 400 })
     }
-    if (!contentType.startsWith('video/')) {
+
+    const baseName = objectKeyBasename(filename)
+    const effectiveContentType =
+      contentType.trim().toLowerCase().startsWith('video/')
+        ? contentType.trim()
+        : contentType.trim().toLowerCase() === 'application/octet-stream'
+          ? inferVideoContentType(baseName, '')
+          : null
+
+    if (!effectiveContentType) {
       return NextResponse.json({ error: 'Only video files are allowed' }, { status: 400 })
     }
     if (!workspaceProjectId) {
@@ -40,7 +50,7 @@ export async function POST(request: Request) {
     const thresholdBytes = multipartUploadThresholdBytes()
 
     if (fileSize != null && shouldUseMultipartUpload(fileSize)) {
-      const multipart = await createMultipartUploadPlan(filename, contentType, fileSize)
+      const multipart = await createMultipartUploadPlan(filename, effectiveContentType, fileSize)
       return NextResponse.json({
         uploadType: 'multipart' as const,
         url,
@@ -49,7 +59,7 @@ export async function POST(request: Request) {
       })
     }
 
-    const signedUrl = await presignPutObject(filename, contentType)
+    const signedUrl = await presignPutObject(filename, effectiveContentType)
 
     return NextResponse.json({
       uploadType: 'single' as const,

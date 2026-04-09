@@ -11,6 +11,7 @@ import { buildOriginalUploadKey } from '@/lib/media-keys'
 import { projectHasPreparedEdit } from '@/lib/project-prepare'
 import type { TranscriptionRequestOptions } from '@/lib/transcription-options'
 import { createUploadProjectStub, startPlannedUpload, type UploadHandle, type UploadPlan } from '@/lib/upload-client'
+import { inferVideoContentType, isVideoFileCandidate } from '@/lib/video-upload-mime'
 
 type AuthedFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
@@ -102,6 +103,7 @@ export function useLibraryUploads({
   const runQueuedUpload = useCallback(
     async (input: {
       file: File
+      contentType: string
       project: VideoProject
       originalKey: string
       clientCapture: ReturnType<typeof buildClientMediaCapture>
@@ -123,7 +125,7 @@ export function useLibraryUploads({
           body: JSON.stringify({
             workspaceProjectId: wpId,
             filename: input.originalKey,
-            contentType: input.file.type,
+            contentType: input.contentType,
             fileSize: input.file.size,
           }),
         })
@@ -175,6 +177,7 @@ export function useLibraryUploads({
         const uploadStartedAt = performance.now()
         const startedUpload = startPlannedUpload({
           file: input.file,
+          contentType: input.contentType,
           plan: presignData,
           onProgress: (loaded, total) => {
             if (!Number.isFinite(total) || total <= 0) return
@@ -358,6 +361,13 @@ export function useLibraryUploads({
           throw new Error('Upload cancelled.')
         }
 
+        const uploadContentType = inferVideoContentType(file.name, file.type)
+        if (!uploadContentType) {
+          removeProjectLocally(id)
+          toast.error('This file does not look like a supported video. Try MP4, MOV, WebM, or AVI.')
+          return
+        }
+
         const clientCapture = buildClientMediaCapture(
           file,
           preview.videoWidth > 0 && preview.videoHeight > 0
@@ -367,6 +377,7 @@ export function useLibraryUploads({
                 durationMs: preview.duration,
               }
             : undefined,
+          { uploadContentType },
         )
 
         const project = {
@@ -386,6 +397,7 @@ export function useLibraryUploads({
 
         await runQueuedUpload({
           file,
+          contentType: uploadContentType,
           project,
           originalKey,
           clientCapture,
@@ -408,7 +420,7 @@ export function useLibraryUploads({
         console.error('Queued upload task failed unexpectedly:', error)
       })
     },
-    [addProjectLocally, browseFilter, runQueuedUpload, updateProjectLocally, wpId],
+    [addProjectLocally, browseFilter, removeProjectLocally, runQueuedUpload, updateProjectLocally, wpId],
   )
 
   const handleFiles = useCallback(
@@ -429,19 +441,19 @@ export function useLibraryUploads({
         return
       }
 
-      const validFiles = files.filter((f) => f.type.startsWith('video/'))
+      const validFiles = files.filter(isVideoFileCandidate)
       if (validFiles.length === 0) {
-        toast.error('Please upload video files only.')
+        toast.error('Please choose video files only (for example MP4, MOV, WebM, or AVI).')
         return
       }
       if (validFiles.length < files.length) {
-        toast.warning(`Skipped ${files.length - validFiles.length} non-video files.`)
+        toast.warning(`Skipped ${files.length - validFiles.length} files that are not supported videos.`)
       }
 
       if (validFiles.length > 1) {
-        toast.info(`Preparing ${validFiles.length} uploads...`)
+        toast.info(`Preparing ${validFiles.length} uploads (up to 2 at a time)…`)
       } else {
-        toast.info('Preparing upload...')
+        toast.info('Preparing upload…')
       }
 
       const pendingAutoTranscriptionOptions = options.autoTranscribe ? options.getTranscriptionOptions() : null

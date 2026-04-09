@@ -52,17 +52,21 @@ export function createUploadProjectStub(input: {
 
 export function startPlannedUpload(input: {
   file: File
+  /** When the File has an empty type (common on some mobile pickers), use this for the PUT Content-Type. */
+  contentType?: string
   plan: UploadPlan
   onProgress: (loaded: number, total: number) => void
   onMultipartComplete: (parts: Array<{ ETag: string; PartNumber: number }>, uploadId: string) => Promise<void>
   onMultipartAbort: (uploadId: string) => Promise<void>
 }): UploadHandle & { done: Promise<void> } {
+  const putContentType = (input.contentType ?? input.file.type).trim() || 'application/octet-stream'
+
   if (input.plan.uploadType === 'single') {
     const plan = input.plan
     const xhr = new XMLHttpRequest()
     const done = new Promise<void>((resolve, reject) => {
       xhr.open('PUT', plan.signedUrl)
-      xhr.setRequestHeader('Content-Type', input.file.type)
+      xhr.setRequestHeader('Content-Type', putContentType)
 
       xhr.upload.onprogress = (event) => {
         if (!event.lengthComputable || event.total <= 0) return
@@ -128,7 +132,7 @@ export function startPlannedUpload(input: {
       const xhr = new XMLHttpRequest()
       activePartXhrs.set(part.partNumber, xhr)
       xhr.open('PUT', part.signedUrl)
-      xhr.setRequestHeader('Content-Type', input.file.type)
+      xhr.setRequestHeader('Content-Type', putContentType)
 
       xhr.upload.onprogress = (event) => {
         const loaded = event.lengthComputable ? Math.min(event.loaded, chunkSize) : 0

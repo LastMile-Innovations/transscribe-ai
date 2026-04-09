@@ -57,6 +57,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
+const LIBRARY_VIDEO_FILE_INPUT_ID = 'library-video-upload-input'
+
 export function LibraryPageClient({
   initialWorkspaces,
   initialTree,
@@ -670,6 +672,7 @@ export function LibraryPageClient({
 
               <LibraryUploadDropzone
                 disabled={viewerLocked}
+                fileInputId={LIBRARY_VIDEO_FILE_INPUT_ID}
                 isDragOver={isDragOver}
                 onDragOver={(e) => {
                   e.preventDefault()
@@ -786,11 +789,14 @@ export function LibraryPageClient({
       )}
 
       <input
+        id={LIBRARY_VIDEO_FILE_INPUT_ID}
         ref={fileInputRef}
         type="file"
         accept="video/*"
         multiple
         className="hidden"
+        aria-label="Choose one or more video files from your device"
+        disabled={!wpId || viewerLocked}
         onChange={onFileChange}
       />
 

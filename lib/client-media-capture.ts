@@ -42,14 +42,17 @@ function clampStr(s: string, max: number): string {
 export function buildClientMediaCapture(
   file: File,
   video?: { videoWidth: number; videoHeight: number; durationMs: number },
+  opts?: { uploadContentType?: string },
 ): ClientMediaCapture {
   const lastModified = file.lastModified
+  const resolvedType =
+    (opts?.uploadContentType && opts.uploadContentType.trim()) || file.type || 'application/octet-stream'
   const out: ClientMediaCapture = {
     capturedAt: new Date().toISOString(),
     file: {
       name: file.name,
       size: file.size,
-      type: file.type || 'application/octet-stream',
+      type: resolvedType,
       lastModified,
       lastModifiedIso: Number.isFinite(lastModified)
         ? new Date(lastModified).toISOString()
