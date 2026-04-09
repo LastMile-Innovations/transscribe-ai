@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Textarea } from '@/components/ui/textarea'
 import { useApp } from '@/lib/app-context'
 import type { TextOverlay } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -396,39 +397,59 @@ export function AIAssistant() {
   }
 
   const isEmpty = messages.length === 0
+  const transcriptSegmentCount = state.transcript?.segments.length ?? 0
+  const overlayCount = state.overlays.length
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
-        <div className="flex items-center gap-2">
-          <div className="flex size-6 items-center justify-center rounded-md bg-brand/20">
-            <Sparkles className="size-3.5 text-brand" />
-          </div>
-          <div>
-            <p className="text-xs font-semibold">AI Assistant</p>
-            <div className="flex items-center gap-1">
-              <div
-                className={cn(
-                  'size-1.5 rounded-full',
-                  busy ? 'animate-pulse bg-amber-400' : 'bg-green-400',
-                )}
-              />
-              <span className="text-xs text-muted-foreground">
-                {busy ? 'Thinking...' : 'Ready'}
-              </span>
+      <div className="shrink-0 border-b border-border/60 bg-card/50 px-4 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="flex size-9 items-center justify-center rounded-xl bg-brand/15">
+              <Sparkles className="size-4 text-brand" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">AI Assistant</p>
+              <p className="mt-1 text-sm font-semibold text-foreground">Draft cleanup, overlay generation, and trim suggestions without leaving the edit.</p>
+              <div className="mt-2 flex items-center gap-1.5">
+                <div
+                  className={cn(
+                    'size-1.5 rounded-full',
+                    busy ? 'animate-pulse bg-amber-400' : 'bg-green-400',
+                  )}
+                />
+                <span className="text-xs text-muted-foreground">
+                  {busy ? 'Thinking...' : 'Ready'}
+                </span>
+              </div>
             </div>
           </div>
+          {!isEmpty && (
+            <Button variant="ghost" size="icon-sm" onClick={handleClear} className="size-8 rounded-full" aria-label="Clear assistant conversation">
+              <Trash2 className="size-3.5" />
+            </Button>
+          )}
         </div>
-        {!isEmpty && (
-          <Button variant="ghost" size="icon-sm" onClick={handleClear} className="size-6">
-            <Trash2 className="size-3" />
-          </Button>
-        )}
+
+        <div className="mt-4 grid grid-cols-2 gap-2 text-xs xl:grid-cols-3">
+          <div className="rounded-xl border border-border/70 bg-background/80 px-3 py-2">
+            <p className="text-muted-foreground">Transcript</p>
+            <p className="mt-1 font-semibold text-foreground">{transcriptSegmentCount} segments</p>
+          </div>
+          <div className="rounded-xl border border-border/70 bg-background/80 px-3 py-2">
+            <p className="text-muted-foreground">Overlays</p>
+            <p className="mt-1 font-semibold text-foreground">{overlayCount} current</p>
+          </div>
+          <div className="col-span-2 rounded-xl border border-border/70 bg-background/80 px-3 py-2 xl:col-span-1">
+            <p className="text-muted-foreground">Best for</p>
+            <p className="mt-1 font-semibold text-foreground">Cleanup, subtitle generation, and quick editorial passes</p>
+          </div>
+        </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {isEmpty ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 p-4">
+          <div className="flex h-full flex-col items-center justify-center gap-5 p-5">
             <div className="flex size-12 items-center justify-center rounded-2xl bg-brand/10">
               <Sparkles className="size-6 text-brand" />
             </div>
@@ -438,21 +459,35 @@ export function AIAssistant() {
                 I can edit transcripts, add overlays, trim video, and more — just describe what you need.
               </p>
             </div>
-            <div className="grid w-full grid-cols-1 gap-1.5">
+            <div className="grid w-full grid-cols-1 gap-2">
               {SUGGESTED_PROMPTS.map((prompt) => (
-                <button
+                <Button
                   key={prompt}
                   type="button"
+                  variant="outline"
                   onClick={() => handleSuggestedPrompt(prompt)}
-                  className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-brand/30 hover:bg-brand/5 hover:text-foreground"
+                  className="h-auto justify-start rounded-xl bg-muted/30 px-3 py-2.5 text-left text-xs font-normal text-muted-foreground hover:border-brand/30 hover:bg-brand/5 hover:text-foreground"
                 >
                   {prompt}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
         ) : (
-          <div className="space-y-4 p-3">
+          <div className="space-y-4 p-4">
+            <div className="flex flex-wrap gap-2">
+              {SUGGESTED_PROMPTS.slice(0, 3).map((prompt) => (
+                <Button
+                  key={prompt}
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleSuggestedPrompt(prompt)}
+                  className="h-auto rounded-full border-border/70 bg-background px-3 py-1 text-xs font-normal text-muted-foreground hover:border-brand/40 hover:text-foreground"
+                >
+                  {prompt}
+                </Button>
+              ))}
+            </div>
             {messages.map((msg) => (
               <MessageBubble key={msg.id} message={msg} />
             ))}
@@ -461,7 +496,7 @@ export function AIAssistant() {
       </div>
 
       <form
-        className="shrink-0 border-t p-3"
+        className="shrink-0 border-t border-border/60 bg-background/95 p-4 backdrop-blur-sm"
         onSubmit={(e) => {
           e.preventDefault()
           void submitMessage()
@@ -486,8 +521,8 @@ export function AIAssistant() {
             </Button>
           </Alert>
         )}
-        <div className="relative rounded-xl border border-input bg-muted/30 transition-colors focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/30">
-          <textarea
+        <div className="relative rounded-2xl border border-input bg-muted/30 transition-colors focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/30">
+          <Textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -495,9 +530,9 @@ export function AIAssistant() {
             placeholder="Ask me to edit the transcript, add overlays, trim video..."
             rows={3}
             disabled={busy}
-            className="w-full resize-none bg-transparent px-3 pt-3 pb-2 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
+            className="min-h-0 resize-none border-0 bg-transparent px-4 pt-4 pb-2 text-sm shadow-none focus-visible:ring-0"
           />
-          <div className="flex items-center justify-between px-3 pb-2 pt-1">
+          <div className="flex items-center justify-between px-4 pb-3 pt-1">
             <span className="text-xs text-muted-foreground/50">
               {input.length > 0 ? `${input.length} chars · ` : ''}
               Cmd+Enter to send
@@ -506,7 +541,7 @@ export function AIAssistant() {
               size="icon-sm"
               type="submit"
               disabled={!input.trim() || busy}
-              className="size-7 rounded-lg bg-brand text-brand-foreground hover:bg-brand/90 disabled:opacity-40"
+              className="size-9 rounded-xl bg-brand text-brand-foreground hover:bg-brand/90 disabled:opacity-40"
             >
               {busy ? (
                 <Loader2 className="size-3.5 animate-spin" />

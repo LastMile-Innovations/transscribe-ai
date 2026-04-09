@@ -7,14 +7,14 @@ import {
   Trash2,
   ChevronDown,
   ChevronUp,
-  Eye,
-  EyeOff,
   Type,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Slider } from '@/components/ui/slider'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { Textarea } from '@/components/ui/textarea'
 import { useApp } from '@/lib/app-context'
 import type { TextOverlay } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -88,41 +88,58 @@ function OverlayCard({
     toast.success('Overlay deleted.')
   }
 
+  const previewStyle = {
+    left: `${overlay.x}%`,
+    top: `${overlay.y}%`,
+    width: `${overlay.width ?? 80}%`,
+    transform: 'translate(-50%, -50%)',
+  } as const
+
   return (
     <div
       className={cn(
-        'rounded-lg border transition-all duration-150',
+        'rounded-2xl border transition-all duration-150',
         isActive ? 'border-brand/50 bg-brand/5' : 'border-border bg-muted/30',
       )}
     >
-      {/* Card header */}
       <div 
-        className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-muted/50"
+        className="cursor-pointer px-4 py-3 hover:bg-muted/50"
         onClick={() => setExpanded(!expanded)}
       >
-        <div className="flex size-7 shrink-0 items-center justify-center rounded bg-muted">
-          <Type className="size-3.5 text-muted-foreground" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-medium">{overlay.text || '(empty)'}</p>
-          <p className="font-mono text-xs text-muted-foreground">
-            {formatTime(overlay.startTime)} – {formatTime(overlay.endTime)}
-          </p>
+        <div className="flex items-start gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted">
+            <Type className="size-4 text-muted-foreground" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-medium">{overlay.text || '(empty)'}</p>
+              {isActive && (
+                <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-brand">
+                  Live
+                </span>
+              )}
+            </div>
+            <p className="mt-1 font-mono text-xs text-muted-foreground">
+              {formatTime(overlay.startTime)} – {formatTime(overlay.endTime)}
+            </p>
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
           <Button
             variant="ghost"
             size="icon-sm"
-            className="size-6"
+            className="size-9 rounded-full"
             onClick={() => setExpanded(!expanded)}
+            aria-label={expanded ? 'Collapse overlay settings' : 'Expand overlay settings'}
           >
             {expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
           </Button>
           <Button
             variant="ghost"
             size="icon-sm"
-            className="size-6 hover:bg-destructive/10 hover:text-destructive"
+            className="size-9 rounded-full hover:bg-destructive/10 hover:text-destructive"
             onClick={handleDelete}
+            aria-label="Delete overlay"
           >
             <Trash2 className="size-3" />
           </Button>
@@ -132,41 +149,38 @@ function OverlayCard({
       {expanded && (
         <>
           <Separator />
-          <div className="space-y-4 px-3 py-3">
-            {/* Text */}
+          <div className="space-y-5 px-4 py-4">
             <div>
               <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Text content</label>
-              <textarea
+              <Textarea
                 value={overlay.text}
                 onChange={(e) => update({ text: e.target.value })}
                 rows={2}
-                className="w-full resize-none rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring/50"
+                className="min-h-0 resize-none bg-background text-sm"
               />
             </div>
 
-            {/* Timing */}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">Start (mm:ss)</label>
-                <input
+                <Input
                   type="text"
                   defaultValue={formatTime(overlay.startTime)}
                   onBlur={(e) => update({ startTime: msFromInput(e.target.value) })}
-                  className="h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring/50"
+                  className="h-8 bg-background px-2.5 font-mono text-sm"
                 />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">End (mm:ss)</label>
-                <input
+                <Input
                   type="text"
                   defaultValue={formatTime(overlay.endTime)}
                   onBlur={(e) => update({ endTime: msFromInput(e.target.value) })}
-                  className="h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring/50"
+                  className="h-8 bg-background px-2.5 font-mono text-sm"
                 />
               </div>
             </div>
 
-            {/* Position */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-muted-foreground">
@@ -192,7 +206,6 @@ function OverlayCard({
               </div>
             </div>
 
-            {/* Font size */}
             <div>
               <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-muted-foreground">
                 <span>Font size</span>
@@ -205,7 +218,18 @@ function OverlayCard({
               />
             </div>
 
-            {/* Background opacity */}
+            <div>
+              <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-muted-foreground">
+                <span>Text width</span>
+                <span className="font-mono">{Math.round(overlay.width ?? 80)}%</span>
+              </label>
+              <Slider
+                min={20} max={100} step={1}
+                value={[overlay.width ?? 80]}
+                onValueChange={([v]) => update({ width: v })}
+              />
+            </div>
+
             <div>
               <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-muted-foreground">
                 <span>Background opacity</span>
@@ -218,7 +242,6 @@ function OverlayCard({
               />
             </div>
 
-            {/* Font weight */}
             <div className="flex items-center gap-2">
               <span className="text-xs font-medium text-muted-foreground">Weight</span>
               <div className="flex gap-1">
@@ -241,7 +264,6 @@ function OverlayCard({
               </div>
             </div>
 
-            {/* Font color */}
             <div>
               <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Font color</label>
               <div className="flex flex-wrap gap-1.5">
@@ -252,7 +274,7 @@ function OverlayCard({
                     title={c.label}
                     onClick={() => update({ fontColor: c.value })}
                     className={cn(
-                      'size-6 rounded-full border-2 transition-transform hover:scale-110',
+                      'size-8 rounded-full border-2 transition-transform hover:scale-110',
                       overlay.fontColor === c.value ? 'border-brand scale-110' : 'border-border',
                     )}
                     style={{ backgroundColor: c.value }}
@@ -261,7 +283,6 @@ function OverlayCard({
               </div>
             </div>
 
-            {/* Background color */}
             <div>
               <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Background color</label>
               <div className="flex flex-wrap gap-1.5">
@@ -272,7 +293,7 @@ function OverlayCard({
                     title={c.label}
                     onClick={() => update({ bgColor: c.value })}
                     className={cn(
-                      'size-6 rounded-full border-2 transition-transform hover:scale-110',
+                      'size-8 rounded-full border-2 transition-transform hover:scale-110',
                       overlay.bgColor === c.value ? 'border-brand scale-110' : 'border-border',
                       c.value === 'transparent' && 'bg-gradient-to-br from-muted to-background',
                     )}
@@ -282,22 +303,33 @@ function OverlayCard({
               </div>
             </div>
 
-            {/* Preview */}
-            <div className="flex items-center justify-center rounded-md bg-zinc-900 py-4">
-              <span
-                style={{
-                  fontSize: `${Math.min(overlay.fontSize, 24)}px`,
-                  color: overlay.fontColor,
-                  fontWeight: overlay.fontWeight,
-                  backgroundColor: overlay.bgColor !== 'transparent'
-                    ? `${overlay.bgColor}${Math.round(overlay.bgOpacity * 255).toString(16).padStart(2, '0')}`
-                    : 'transparent',
-                  padding: '4px 12px',
-                  borderRadius: '4px',
-                }}
-              >
-                {overlay.text || 'Preview'}
-              </span>
+            <div className="rounded-xl border border-border bg-zinc-900 p-4">
+              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50">Frame Preview</p>
+              <div className="relative flex min-h-40 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.12),transparent_40%),linear-gradient(135deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))] px-4">
+                <div className="pointer-events-none absolute inset-4 rounded border border-dashed border-white/15" />
+                <div className="pointer-events-none absolute inset-7 rounded border border-dashed border-amber-200/20" />
+                <span
+                  className="absolute inline-block text-center"
+                  style={{
+                    ...previewStyle,
+                    fontSize: `${Math.min(overlay.fontSize, 24)}px`,
+                    color: overlay.fontColor,
+                    fontWeight: overlay.fontWeight,
+                    backgroundColor: overlay.bgColor !== 'transparent'
+                      ? `${overlay.bgColor}${Math.round(overlay.bgOpacity * 255).toString(16).padStart(2, '0')}`
+                      : 'transparent',
+                    padding: '4px 12px',
+                    borderRadius: '4px',
+                    lineHeight: 1.4,
+                    maxWidth: `${overlay.width ?? 80}%`,
+                  }}
+                >
+                  {overlay.text || 'Preview'}
+                </span>
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Placement mirrors the current horizontal, vertical, and width settings.
+              </p>
             </div>
           </div>
         </>
@@ -331,15 +363,15 @@ export function OverlayEditor() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Toolbar */}
-      <div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
+      <div className="flex shrink-0 items-center justify-between border-b border-border/60 bg-background/80 px-4 py-3">
         <div>
-          <p className="text-xs font-medium">{state.overlays.length} overlay{state.overlays.length !== 1 ? 's' : ''}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Overlay Inspector</p>
+          <p className="text-sm font-medium text-foreground">{state.overlays.length} overlay{state.overlays.length !== 1 ? 's' : ''}</p>
           <p className="text-xs text-muted-foreground">
             {visibleIds.size} visible at {formatTime(currentTime)}
           </p>
         </div>
-        <Button size="sm" className="h-7 bg-brand text-brand-foreground hover:bg-brand/90 text-xs" onClick={handleAdd}>
+        <Button size="sm" className="h-9 rounded-full bg-brand px-4 text-xs text-brand-foreground hover:bg-brand/90" onClick={handleAdd}>
           <Plus className="size-3" />
           Add overlay
         </Button>

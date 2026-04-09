@@ -9,6 +9,8 @@ import {
   Maximize,
   SkipBack,
   SkipForward,
+  Captions,
+  Scissors,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
@@ -292,6 +294,16 @@ export function VideoPlayer() {
   const trimEndPct = duration > 0 ? ((trimRange?.end ?? duration) / duration) * 100 : 100
 
   const WAVEFORM_BARS = 80
+  const overlayMarkerPositions = duration > 0
+    ? overlays.map((overlay) => ({
+        id: overlay.id,
+        left: (overlay.startTime / duration) * 100,
+        width: Math.max(1.5, ((overlay.endTime - overlay.startTime) / duration) * 100),
+        label: overlay.text.trim() || 'Overlay',
+        active: currentTime >= overlay.startTime && currentTime <= overlay.endTime,
+        startTime: overlay.startTime,
+      }))
+    : []
 
   return (
     <div
@@ -300,7 +312,25 @@ export function VideoPlayer() {
       onMouseLeave={() => isPlaying && setShowControls(false)}
       onTouchStart={handleTouch}
     >
-      {/* Video area */}
+      <div className="flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-white/6 via-white/3 to-transparent px-4 py-2 text-xs text-white/72">
+        <div>
+          <p className="font-semibold tracking-[0.16em] uppercase text-white/45">Review Surface</p>
+          <p className="text-sm text-white/88">{project?.title ?? 'Playback preview'}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/6 px-2.5 py-1">
+            <Captions className="size-3.5" />
+            {visibleOverlays.length} overlays visible
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/6 px-2.5 py-1">
+            <Scissors className="size-3.5" />
+            {Math.max(0, trimRange?.end ?? duration) > 0 && trimRange
+              ? `${formatTime(trimRange.start)} - ${formatTime(trimRange.end)}`
+              : 'Full clip'}
+          </span>
+        </div>
+      </div>
+
       <div className="relative flex-1 overflow-hidden bg-black">
         {project?.fileUrl ? (
           <video
@@ -366,19 +396,21 @@ export function VideoPlayer() {
         ))}
       </div>
 
-      {/* Controls */}
       <div className={cn(
-        'flex flex-col gap-2 border-t border-white/10 bg-black/90 px-4 py-3 transition-opacity duration-300',
-        !showControls && isPlaying ? 'opacity-0' : 'opacity-100',
+        'flex flex-col gap-3 border-t border-white/10 bg-black/88 px-4 py-4 transition-opacity duration-300',
+        !showControls && isPlaying ? 'opacity-75' : 'opacity-100',
       )}>
-        {/* Waveform + timeline */}
-        <div 
-          className="group relative cursor-pointer" 
+        <div
+          className="group relative cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] p-3"
           onClick={handleProgressClick}
           onTouchEnd={handleProgressClick}
         >
-          {/* Waveform bars */}
-          <div className="flex h-8 items-end gap-px overflow-hidden rounded-sm">
+          <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-[0.16em] text-white/45">
+            <span>Timeline</span>
+            <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
+          </div>
+
+          <div className="relative flex h-10 items-end gap-px overflow-hidden rounded-md">
             {Array.from({ length: WAVEFORM_BARS }, (_, i) => {
               const barPct = (i / WAVEFORM_BARS) * 100
               const isInTrim = barPct >= trimStartPct && barPct <= trimEndPct
@@ -390,43 +422,65 @@ export function VideoPlayer() {
                   style={{
                     height: `${waveBarHeight(i, WAVEFORM_BARS) * 100}%`,
                     backgroundColor: isPast
-                      ? isInTrim ? 'oklch(0.68 0.18 280)' : 'oklch(0.68 0.18 280 / 0.4)'
-                      : isInTrim ? 'rgb(255 255 255 / 0.25)' : 'rgb(255 255 255 / 0.08)',
+                      ? isInTrim ? 'oklch(0.66 0.17 32)' : 'rgb(251 146 60 / 0.35)'
+                      : isInTrim ? 'rgb(255 255 255 / 0.28)' : 'rgb(255 255 255 / 0.08)',
                   }}
                 />
               )
             })}
           </div>
-          {/* Playhead */}
+
+          {overlayMarkerPositions.map((marker) => (
+            <button
+              key={marker.id}
+              type="button"
+              className={cn(
+                'absolute bottom-3 top-8 overflow-hidden rounded-sm border text-left text-[10px] leading-none text-white/80 transition-colors',
+                marker.active
+                  ? 'border-sky-200/80 bg-sky-300/30'
+                  : 'border-sky-200/30 bg-sky-300/15 hover:bg-sky-300/25',
+              )}
+              style={{ left: `${marker.left}%`, width: `${marker.width}%` }}
+              onClick={(e) => {
+                e.stopPropagation()
+                seek(marker.startTime)
+              }}
+              title={`${marker.label} at ${formatTime(marker.startTime)}`}
+              aria-label={`Seek to overlay ${marker.label}`}
+            >
+              <span className="block truncate px-1.5 pt-0.5">{marker.label}</span>
+            </button>
+          ))}
+
           <div
-            className="absolute top-0 h-full w-0.5 bg-brand shadow-lg shadow-brand/50 transition-none"
+            className="absolute bottom-3 top-8 h-auto w-0.5 bg-brand shadow-lg shadow-brand/50 transition-none"
             style={{ left: `${progressPct}%` }}
           >
             <div className="absolute -top-1 left-1/2 size-3 -translate-x-1/2 rounded-full bg-brand ring-2 ring-background" />
           </div>
-          {/* Trim region overlay */}
+
           {duration > 0 && (trimStartPct > 0 || trimEndPct < 100) && (
             <>
               <div
-                className="pointer-events-none absolute inset-y-0 left-0 bg-black/50"
+                className="pointer-events-none absolute inset-y-8 left-0 rounded-l-md bg-black/50"
                 style={{ width: `${trimStartPct}%` }}
               />
               <div
-                className="pointer-events-none absolute inset-y-0 right-0 bg-black/50"
+                className="pointer-events-none absolute inset-y-8 right-0 rounded-r-md bg-black/50"
                 style={{ width: `${100 - trimEndPct}%` }}
               />
             </>
           )}
         </div>
 
-        {/* Controls row */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-black/40 rounded-full p-1 backdrop-blur-md border border-white/10">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] p-1.5 backdrop-blur-md">
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={skipBack}
-              className="size-8 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
+              className="size-10 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
+              aria-label="Skip back 5 seconds"
             >
               <SkipBack className="size-4" />
             </Button>
@@ -434,7 +488,8 @@ export function VideoPlayer() {
             <Button
               size="icon"
               onClick={togglePlay}
-              className="size-10 rounded-full bg-brand text-brand-foreground hover:bg-brand/90 hover:scale-105 transition-transform shadow-lg shadow-brand/20"
+              className="size-12 rounded-full bg-brand text-brand-foreground shadow-lg shadow-brand/20 transition-transform hover:scale-105 hover:bg-brand/90"
+              aria-label={isPlaying ? 'Pause playback' : 'Start playback'}
             >
               {isPlaying ? <Pause className="size-5" /> : <Play className="size-5 translate-x-0.5" />}
             </Button>
@@ -443,28 +498,35 @@ export function VideoPlayer() {
               variant="ghost"
               size="icon-sm"
               onClick={skipForward}
-              className="size-8 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
+              className="size-10 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
+              aria-label="Skip forward 5 seconds"
             >
               <SkipForward className="size-4" />
             </Button>
           </div>
 
-          <div className="ml-2 font-mono text-xs font-medium tracking-wider text-white/80">
-            {formatTime(currentTime)}{' '}
-            <span className="text-white/30 px-1">/</span>{' '}
-            {formatTime(duration)}
+          <div className="min-w-[11rem] rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2 font-mono text-xs font-medium tracking-wider text-white/85">
+            <div className="flex items-center justify-between gap-3">
+              <span>Current</span>
+              <span>{formatTime(currentTime)}</span>
+            </div>
+            <div className="mt-1 flex items-center justify-between gap-3 text-white/55">
+              <span>Duration</span>
+              <span>{formatTime(duration)}</span>
+            </div>
           </div>
 
-          <div className="ml-auto flex items-center gap-1.5 bg-black/40 rounded-full p-1 backdrop-blur-md border border-white/10">
+          <div className="ml-auto flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] p-1.5 backdrop-blur-md">
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={() => setMuted(!muted)}
-              className="size-8 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
+              className="size-10 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
+              aria-label={muted || volume === 0 ? 'Unmute video' : 'Mute video'}
             >
               {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
             </Button>
-            <div className="w-20 pr-3">
+            <div className="w-24 pr-3">
               <Slider
                 min={0}
                 max={100}
@@ -482,7 +544,8 @@ export function VideoPlayer() {
               variant="ghost"
               size="icon-sm"
               onClick={fullscreen}
-              className="size-8 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
+              className="size-10 rounded-full text-white/80 hover:bg-white/20 hover:text-white"
+              aria-label="Toggle fullscreen"
             >
               <Maximize className="size-4" />
             </Button>

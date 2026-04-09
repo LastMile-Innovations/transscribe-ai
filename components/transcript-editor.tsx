@@ -16,6 +16,7 @@ import {
   FilterX,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -27,6 +28,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { useApp } from '@/lib/app-context'
 import type { TranscriptSegment } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -376,7 +378,7 @@ function SegmentRow({
           </button>
 
           {editingSpeaker ? (
-            <input
+            <Input
               autoFocus
               value={speakerValue}
               onChange={(e) => setSpeakerValue(e.target.value)}
@@ -391,7 +393,7 @@ function SegmentRow({
                   setEditingSpeaker(false)
                 }
               }}
-              className="h-5 w-32 rounded border border-brand bg-background px-1.5 font-mono text-xs outline-none ring-1 ring-brand/30"
+              className="h-7 w-32 border-brand bg-background px-1.5 font-mono text-xs ring-1 ring-brand/30"
             />
           ) : (
             <>
@@ -422,10 +424,10 @@ function SegmentRow({
 
           <SaveStateBadge state={saveState} />
 
-          <div className="ml-auto flex items-center gap-0.5">
+          <div className="ml-auto flex items-center gap-1">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon-sm" onClick={handleCopy} className="size-6">
+                <Button variant="ghost" size="icon-sm" onClick={handleCopy} className="size-8 rounded-full" aria-label="Copy segment">
                   <Copy className="size-3" />
                 </Button>
               </TooltipTrigger>
@@ -435,7 +437,7 @@ function SegmentRow({
             {previousMergeId && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => onMerge(previousMergeId, segment.id)} className="size-6">
+                  <Button variant="ghost" size="icon-sm" onClick={() => onMerge(previousMergeId, segment.id)} className="size-8 rounded-full" aria-label="Merge with previous segment">
                     <Merge className="size-3 rotate-180" />
                   </Button>
                 </TooltipTrigger>
@@ -446,7 +448,7 @@ function SegmentRow({
             {nextMergeId && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => onMerge(segment.id, nextMergeId)} className="size-6">
+                  <Button variant="ghost" size="icon-sm" onClick={() => onMerge(segment.id, nextMergeId)} className="size-8 rounded-full" aria-label="Merge with next segment">
                     <Merge className="size-3" />
                   </Button>
                 </TooltipTrigger>
@@ -460,7 +462,8 @@ function SegmentRow({
                   variant="ghost"
                   size="icon-sm"
                   onClick={() => onSplit(segment, textareaRef.current?.selectionStart ?? Math.floor(draftText.length / 2))}
-                  className="size-6"
+                  className="size-8 rounded-full"
+                  aria-label="Split segment at cursor"
                 >
                   <Scissors className="size-3" />
                 </Button>
@@ -474,7 +477,8 @@ function SegmentRow({
                   variant="ghost"
                   size="icon-sm"
                   onClick={() => onDelete(segment.id)}
-                  className="size-6 hover:bg-destructive/10 hover:text-destructive"
+                  className="size-8 rounded-full hover:bg-destructive/10 hover:text-destructive"
+                  aria-label="Delete segment"
                 >
                   <Trash2 className="size-3" />
                 </Button>
@@ -484,13 +488,13 @@ function SegmentRow({
           </div>
         </div>
 
-        <textarea
+        <Textarea
           ref={textareaRef}
           value={draftText}
           onChange={(e) => scheduleTextSave(e.target.value)}
           onBlur={() => void flushTextSave(draftTextRef.current)}
           rows={Math.max(2, Math.ceil(Math.max(draftText.length, 1) / 65))}
-          className="w-full resize-none rounded-md border border-transparent bg-transparent px-2 py-1 font-sans text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground transition-colors focus:border-brand/20 focus:bg-background/70"
+          className="min-h-0 w-full resize-none border-transparent bg-transparent px-2 py-1 font-sans text-[13px] leading-relaxed text-foreground shadow-none focus-visible:border-brand/20 focus-visible:ring-0 focus-visible:bg-background/70"
           placeholder="Transcript text..."
         />
 
@@ -834,54 +838,30 @@ export function TranscriptEditor() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 flex-col gap-2 border-b px-3 py-2">
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <input
+      <div className="flex shrink-0 flex-col gap-3 border-b border-border/60 bg-background/80 px-4 py-3">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-center">
+          <div className="relative min-w-0">
+            <Input
               type="search"
-              placeholder="Search transcript..."
+              placeholder="Search transcript or speakers..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="h-7 w-full rounded-md border border-input bg-transparent pl-2.5 pr-6 text-xs outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring/50"
+              className="h-10 rounded-full bg-background pl-4 pr-8 text-sm"
             />
             {searchTerm && (
               <button
                 type="button"
                 onClick={() => setSearchTerm('')}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-sm opacity-50 hover:opacity-100"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-sm opacity-50 hover:opacity-100"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
               </button>
             )}
           </div>
-          <span className="shrink-0 text-xs text-muted-foreground">
+          <Badge variant="outline" className="h-9 w-fit rounded-full px-3 font-mono text-xs text-muted-foreground">
             {filtered.length} / {transcript.segments.length}
-          </span>
-          {activeSegmentId && (
-            <Button variant="outline" size="sm" onClick={jumpToActive} className="h-7 gap-1 px-2 text-xs">
-              <Crosshair className="size-3.5" />
-              <span className="hidden md:inline">Jump to active</span>
-            </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={handleExportClipboard} className="h-7 px-2 text-xs">
-            <Copy className="size-3 md:mr-1" />
-            <span className="hidden md:inline">Copy all</span>
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const firstSpeaker = speakerSummary[0]?.name ?? ''
-              setSelectedSpeaker((current) => current || firstSpeaker)
-              setSpeakerRenameValue((current) => current || firstSpeaker)
-              setSpeakerDialogOpen(true)
-            }}
-            className="h-7 gap-1 px-2 text-xs"
-          >
-            <Users className="size-3.5" />
-            <span className="hidden md:inline">Manage speakers</span>
-          </Button>
-          <div className="w-28 shrink-0 text-right text-xs">
+          </Badge>
+          <div className="min-w-[7rem] text-left text-xs lg:text-right">
             {errorCount > 0 ? (
               <span className="text-destructive">{errorCount} errors</span>
             ) : pendingChanges > 0 ? (
@@ -892,8 +872,35 @@ export function TranscriptEditor() {
           </div>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          {activeSegmentId && (
+            <Button variant="outline" size="sm" onClick={jumpToActive} className="h-9 gap-1 rounded-full px-3 text-xs">
+              <Crosshair className="size-3.5" />
+              Jump to active
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={handleExportClipboard} className="h-9 gap-1 rounded-full px-3 text-xs">
+            <Copy className="size-3" />
+            Copy all
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const firstSpeaker = speakerSummary[0]?.name ?? ''
+              setSelectedSpeaker((current) => current || firstSpeaker)
+              setSpeakerRenameValue((current) => current || firstSpeaker)
+              setSpeakerDialogOpen(true)
+            }}
+            className="h-9 gap-1 rounded-full px-3 text-xs"
+          >
+            <Users className="size-3.5" />
+            Manage speakers
+          </Button>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span>Filters:</span>
+          <span className="font-medium">Speakers</span>
           <button
             type="button"
             onClick={() => {
@@ -901,7 +908,7 @@ export function TranscriptEditor() {
               setSpeakerFilter(null)
             }}
             className={cn(
-              'rounded-full border px-2 py-0.5 transition-colors',
+              'rounded-full border px-3 py-1 transition-colors',
               !searchTerm && !speakerFilter
                 ? 'border-brand bg-brand/10 text-brand'
                 : 'border-border hover:border-brand/40 hover:text-foreground',
@@ -917,7 +924,7 @@ export function TranscriptEditor() {
                 setSpeakerFilter((current) => (current === speaker.name ? null : speaker.name))
               }}
               className={cn(
-                'rounded-full border px-2 py-0.5 transition-colors',
+                'rounded-full border px-3 py-1 transition-colors',
                 getSpeakerColorClass(speaker.name),
                 speakerFilter === speaker.name && 'ring-1 ring-brand/60',
               )}
@@ -932,34 +939,17 @@ export function TranscriptEditor() {
                 setSearchTerm('')
                 setSpeakerFilter(null)
               }}
-              className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 hover:border-brand/40 hover:text-foreground"
+              className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 hover:border-brand/40 hover:text-foreground"
             >
               <FilterX className="size-3" />
               Clear filters
             </button>
           )}
         </div>
-
-        <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
-          <div className="rounded-lg border bg-muted/30 px-3 py-2">
-            <p className="text-muted-foreground">Current view</p>
-            <p className="font-medium text-foreground">
-              {speakerFilter ? `${speakerFilter} segments` : 'All speakers'}
-            </p>
-          </div>
-          <div className="rounded-lg border bg-muted/30 px-3 py-2">
-            <p className="text-muted-foreground">Editing flow</p>
-            <p className="font-medium text-foreground">Click speaker for one row, use “Manage speakers” for all rows</p>
-          </div>
-          <div className="rounded-lg border bg-muted/30 px-3 py-2">
-            <p className="text-muted-foreground">Keyboard</p>
-            <p className="font-medium text-foreground">`/` to search, `Alt+Space/J/L` while typing</p>
-          </div>
-        </div>
       </div>
 
       <ScrollArea className="flex-1">
-        <div className="space-y-0.5 p-3">
+        <div className="space-y-1 p-4">
           {filtered.map((segment) => {
             const adjacentIds = getAdjacentSegmentIds(transcript.segments, segment.id)
             const previousSegment =

@@ -23,6 +23,8 @@ import {
   ChevronDown,
   Clapperboard,
   FileArchive,
+  PanelRightOpen,
+  MoreHorizontal,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -261,6 +263,7 @@ export function TopBar({
   const [transcriptList, setTranscriptList] = useState<TranscriptSummary[]>(initialTranscriptList)
   const [switchingTranscriptId, setSwitchingTranscriptId] = useState<string | null>(null)
   const [newDialogOpen, setNewDialogOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [newLabel, setNewLabel] = useState('')
   const [startingTranscribe, setStartingTranscribe] = useState(false)
   const [mediaInfoOpen, setMediaInfoOpen] = useState(false)
@@ -466,8 +469,9 @@ export function TopBar({
   }
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background/90 px-4 backdrop-blur-sm">
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+    <header className="border-b border-border/60 bg-background/85 backdrop-blur-md">
+      <div className="flex min-h-14 items-center gap-3 px-3 py-2 md:px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
         <Button variant="ghost" size="icon-sm" asChild>
           <Link href={libraryHref} aria-label="Back to library">
             <ArrowLeft className="size-4" />
@@ -484,7 +488,7 @@ export function TopBar({
 
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {editingTitle ? (
-            <input
+            <Input
               autoFocus
               value={titleValue}
               onChange={(e) => setTitleValue(e.target.value)}
@@ -499,14 +503,14 @@ export function TopBar({
                   setEditingTitle(false)
                 }
               }}
-              className="min-w-0 flex-1 rounded border border-brand bg-background px-2 py-0.5 text-sm font-medium outline-none ring-2 ring-brand/30"
+              className="min-w-0 flex-1 rounded-lg border-brand/50 bg-background text-sm font-semibold ring-2 ring-brand/20"
             />
           ) : (
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <button
                 type="button"
                 onClick={handleTitleClick}
-                className="truncate text-sm font-bold transition-colors hover:text-brand"
+                className="truncate text-sm font-semibold transition-colors hover:text-brand md:text-base"
                 title="Click to rename"
               >
                 {project.title}
@@ -535,7 +539,7 @@ export function TopBar({
           )}
         </div>
 
-        <div className="hidden shrink-0 items-center gap-2 sm:flex">
+        <div className="hidden shrink-0 items-center gap-2 lg:flex">
           {switchingTranscriptId ? (
             <Loader2 className="size-4 animate-spin text-muted-foreground" />
           ) : (
@@ -544,7 +548,7 @@ export function TopBar({
               onValueChange={(v) => void switchTranscript(v)}
               disabled={transcriptList.length === 0}
             >
-              <SelectTrigger className="h-8 w-[min(220px,28vw)] text-xs">
+              <SelectTrigger className="h-9 w-[min(240px,28vw)] rounded-full px-3 text-xs">
                 <SelectValue placeholder="Transcript" />
               </SelectTrigger>
               <SelectContent>
@@ -556,7 +560,7 @@ export function TopBar({
               </SelectContent>
             </Select>
           )}
-          <Button variant="outline" size="sm" className="h-8 gap-1 px-2 text-xs" onClick={() => setNewDialogOpen(true)}>
+          <Button variant="outline" size="sm" className="h-9 rounded-full gap-1 px-3 text-xs" onClick={() => setNewDialogOpen(true)}>
             <PlusCircle className="size-3.5" />
             New transcript
           </Button>
@@ -564,7 +568,7 @@ export function TopBar({
 
         <Badge
           variant={state.transcript ? 'default' : 'secondary'}
-          className="h-5 shrink-0 gap-1 text-[10px] font-bold uppercase tracking-tight hidden sm:flex"
+          className="hidden h-6 shrink-0 gap-1 rounded-full px-2.5 text-[10px] font-bold uppercase tracking-tight md:flex"
         >
           <CheckCircle className="size-3" />
           {state.transcript ? `${state.transcript.segments.length} segments` : 'Processing'}
@@ -574,7 +578,7 @@ export function TopBar({
       <div className="flex shrink-0 items-center gap-1.5">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="outline" size="sm" onClick={exportTranscript} className="hidden sm:flex">
+            <Button variant="outline" size="sm" onClick={exportTranscript} className="hidden rounded-full lg:flex">
               <FileText className="size-4" />
               Export TXT
             </Button>
@@ -583,7 +587,7 @@ export function TopBar({
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="outline" size="sm" onClick={exportSRT} className="hidden sm:flex">
+            <Button variant="outline" size="sm" onClick={exportSRT} className="hidden rounded-full lg:flex">
               <Download className="size-4" />
               Export SRT
             </Button>
@@ -595,7 +599,7 @@ export function TopBar({
             <Button
               variant="outline"
               size="sm"
-              className="hidden h-8 gap-1 px-2 text-xs sm:flex"
+              className="hidden h-9 gap-1 rounded-full px-3 text-xs lg:flex"
               title="Download original upload or edited MP4 from storage"
             >
               <Download className="size-4" />
@@ -632,7 +636,7 @@ export function TopBar({
         <Button
           variant="outline"
           size="icon-sm"
-          className="shrink-0 hidden sm:flex"
+          className="hidden shrink-0 lg:flex"
           aria-label="Media metadata"
           title="Media metadata"
           onClick={() => setMediaInfoOpen(true)}
@@ -642,7 +646,7 @@ export function TopBar({
         </Button>
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" size="icon-sm" className="hidden sm:flex">
+            <Button variant="outline" size="icon-sm" className="hidden lg:flex">
               <HelpCircle className="size-4" />
             </Button>
           </PopoverTrigger>
@@ -677,26 +681,25 @@ export function TopBar({
           </PopoverContent>
         </Popover>
         <ThemeToggle />
-        
-        {/* Mobile Menu */}
-        <div className="sm:hidden flex items-center">
+
+        <div className="flex items-center lg:hidden">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon-sm">
-                <Menu className="size-4" />
+                <MoreHorizontal className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               {onOpenAi && (
                 <>
-                  <DropdownMenuItem onClick={onOpenAi} className="lg:hidden text-brand font-medium">
+                  <DropdownMenuItem onClick={onOpenAi} className="text-brand font-medium">
                     <Bot className="mr-2 size-4" />
                     AI Assistant
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator className="lg:hidden" />
+                  <DropdownMenuSeparator />
                 </>
               )}
-              
+
               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
                 Transcript
               </DropdownMenuLabel>
@@ -714,7 +717,7 @@ export function TopBar({
                 <PlusCircle className="mr-2 size-4" />
                 New transcript
               </DropdownMenuItem>
-              
+
               <DropdownMenuSeparator />
               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
                 Export & Info
@@ -755,6 +758,13 @@ export function TopBar({
                 <Info className="mr-2 size-4" />
                 Media metadata
               </DropdownMenuItem>
+              <DropdownMenuItem onSelect={(e) => {
+                e.preventDefault()
+                setShortcutsOpen(true)
+              }}>
+                <HelpCircle className="mr-2 size-4" />
+                Keyboard shortcuts
+              </DropdownMenuItem>
 
               {(project.caseId || project.exhibitNumber) && (
                 <>
@@ -786,12 +796,53 @@ export function TopBar({
           <UserButton />
         </Show>
       </div>
+      </div>
+
+      <div className="flex items-center gap-2 overflow-x-auto border-t border-border/40 px-3 py-2 text-xs text-muted-foreground md:px-4">
+        <Badge variant="outline" className="rounded-full px-2.5 py-1 font-mono">
+          {formatDuration(project.duration)} runtime
+        </Badge>
+        {project.caseId && (
+          <Badge variant="secondary" className="rounded-full px-2.5 py-1 font-mono">
+            {project.caseId}
+          </Badge>
+        )}
+        {project.exhibitNumber && (
+          <Badge variant="outline" className="rounded-full border-brand/30 px-2.5 py-1 font-mono text-brand">
+            EX-{project.exhibitNumber}
+          </Badge>
+        )}
+        <span className="hidden md:inline">Core loop: play, seek, and edit transcript without leaving the page.</span>
+      </div>
 
       <MediaMetadataDialog
         open={mediaInfoOpen}
         onOpenChange={setMediaInfoOpen}
         project={project}
       />
+
+      <Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Keyboard shortcuts</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 text-sm">
+            {[
+              ['Play / Pause', 'Space'],
+              ['Play / Pause while typing', 'Alt+Space'],
+              ['Skip back 5s', 'J'],
+              ['Skip forward 5s', 'L'],
+              ['Seek while typing', 'Alt+J / Alt+L'],
+              ['Search transcript', '/'],
+            ].map(([label, key]) => (
+              <div key={label} className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">{label}</span>
+                <kbd className="rounded bg-muted px-2 py-1 font-mono text-xs">{key}</kbd>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={newDialogOpen} onOpenChange={setNewDialogOpen}>
         <DialogContent className="sm:max-w-md">

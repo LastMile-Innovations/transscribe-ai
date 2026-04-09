@@ -19,10 +19,6 @@ function formatTime(ms: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
-function formatMs(ms: number): string {
-  return `${ms}ms`
-}
-
 // Deterministic bar heights for waveform preview
 function waveBarHeight(index: number): number {
   return 0.15 + 0.7 * Math.abs(Math.sin(index * 2.7 + 1.3) * Math.cos(index * 0.5))
@@ -89,10 +85,13 @@ export function TrimEditor() {
   return (
     <div className="flex h-full flex-col gap-0">
       <div className="flex-1 overflow-y-auto p-4">
-        <div className="mx-auto max-w-2xl space-y-6">
+        <div className="mx-auto max-w-3xl space-y-6">
+          <div className="rounded-2xl border border-border/70 bg-card/70 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Trim Workflow</p>
+            <h3 className="mt-1 text-lg font-semibold text-foreground">Mark the usable portion of the clip without leaving the editor.</h3>
+          </div>
 
-          {/* Stats row */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             {[
               { label: 'Total duration', value: formatTime(duration), sub: 'Original' },
               { label: 'Trim duration', value: formatTime(trimDuration), sub: 'Selected range', highlight: true },
@@ -101,7 +100,7 @@ export function TrimEditor() {
               <div
                 key={stat.label}
                 className={cn(
-                  'rounded-lg border p-3 text-center',
+                  'rounded-2xl border p-4 text-center',
                   stat.highlight ? 'border-brand/30 bg-brand/5' : 'border-border bg-muted/30',
                 )}
               >
@@ -114,12 +113,14 @@ export function TrimEditor() {
             ))}
           </div>
 
-          {/* Visual waveform trim area */}
           <div>
-            <p className="mb-2 text-xs font-medium text-muted-foreground">Timeline</p>
-            <div className="relative rounded-lg border border-border bg-zinc-950 p-3">
-              {/* Waveform bars */}
-              <div className="flex h-16 items-end gap-px">
+            <p className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Timeline</p>
+            <div className="relative rounded-2xl border border-border bg-zinc-950 p-4">
+              <div className="mb-3 flex items-center justify-between text-xs text-white/60">
+                <span>Selected region is bright. Removed sections stay shaded.</span>
+                <span>{formatTime(trimRange.start)} to {formatTime(trimRange.end)}</span>
+              </div>
+              <div className="flex h-20 items-end gap-px">
                 {Array.from({ length: BARS }, (_, i) => {
                   const barPct = i / BARS * 100
                   const inTrim = barPct >= startPct && barPct <= endPct
@@ -130,7 +131,7 @@ export function TrimEditor() {
                       style={{
                         height: `${waveBarHeight(i) * 100}%`,
                         backgroundColor: inTrim
-                          ? 'oklch(0.68 0.18 280 / 0.8)'
+                          ? 'oklch(0.66 0.17 32 / 0.9)'
                           : 'rgb(255 255 255 / 0.08)',
                       }}
                     />
@@ -141,8 +142,8 @@ export function TrimEditor() {
               {/* Playhead */}
               {duration > 0 && (
                 <div
-                  className="pointer-events-none absolute bottom-0 top-3 w-px bg-brand"
-                  style={{ left: `calc(12px + ${currentPct}% * (100% - 24px) / 100)` }}
+                  className="pointer-events-none absolute bottom-0 top-4 w-px bg-brand"
+                  style={{ left: `calc(16px + ${currentPct}% * (100% - 32px) / 100)` }}
                 >
                   <div className="absolute -top-1 left-1/2 size-2.5 -translate-x-1/2 rounded-full bg-brand" />
                 </div>
@@ -151,24 +152,23 @@ export function TrimEditor() {
               {/* Trim region shading */}
               {startPct > 0 && (
                 <div
-                  className="pointer-events-none absolute inset-y-3 left-3 rounded-l-sm bg-black/60"
-                  style={{ width: `calc(${startPct}% * (100% - 24px) / 100)` }}
+                  className="pointer-events-none absolute inset-y-4 left-4 rounded-l-sm bg-black/60"
+                  style={{ width: `calc(${startPct}% * (100% - 32px) / 100)` }}
                 />
               )}
               {endPct < 100 && (
                 <div
-                  className="pointer-events-none absolute inset-y-3 right-3 rounded-r-sm bg-black/60"
-                  style={{ width: `calc(${100 - endPct}% * (100% - 24px) / 100)` }}
+                  className="pointer-events-none absolute inset-y-4 right-4 rounded-r-sm bg-black/60"
+                  style={{ width: `calc(${100 - endPct}% * (100% - 32px) / 100)` }}
                 />
               )}
             </div>
           </div>
 
-          {/* Range slider */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground">Trim range</p>
-              <Button variant="ghost" size="sm" onClick={handleReset} className="h-6 gap-1 px-2 text-xs">
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Trim range</p>
+              <Button variant="ghost" size="sm" onClick={handleReset} className="h-8 gap-1 rounded-full px-3 text-xs">
                 <RotateCcw className="size-3" />
                 Reset
               </Button>
@@ -181,7 +181,7 @@ export function TrimEditor() {
                   step={100}
                   value={[trimRange.start, trimRange.end]}
                   onValueChange={handleSliderChange}
-                  className="[&_[data-slot=slider-range]]:bg-brand cursor-pointer"
+                  className="cursor-pointer [&_[data-slot=slider-range]]:bg-brand [&_[data-slot=slider-thumb]]:size-4"
                 />
               ) : (
                 <div className="h-4 rounded-full bg-muted" />
@@ -193,51 +193,47 @@ export function TrimEditor() {
             </div>
           </div>
 
-          {/* In/Out point controls */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* In point */}
-            <div className="rounded-lg border border-border bg-muted/30 p-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border border-border bg-muted/30 p-4">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">In point</span>
                 <span className="font-mono text-sm font-bold text-foreground">{formatTime(trimRange.start)}</span>
               </div>
-              <div className="flex items-center gap-1">
-                <Button variant="outline" size="icon-sm" className="size-7" onClick={() => nudgeStart(-1000)}>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon-sm" className="size-9 rounded-full" onClick={() => nudgeStart(-1000)}>
                   <ChevronLeft className="size-3" />
                 </Button>
-                <Button variant="outline" size="sm" className="h-7 flex-1 text-xs" onClick={setInAtPlayhead}>
+                <Button variant="outline" size="sm" className="h-9 flex-1 rounded-full text-xs" onClick={setInAtPlayhead}>
                   <Scissors className="size-3" />
                   Set at playhead
                 </Button>
-                <Button variant="outline" size="icon-sm" className="size-7" onClick={() => nudgeStart(1000)}>
+                <Button variant="outline" size="icon-sm" className="size-9 rounded-full" onClick={() => nudgeStart(1000)}>
                   <ChevronRight className="size-3" />
                 </Button>
               </div>
             </div>
 
-            {/* Out point */}
-            <div className="rounded-lg border border-border bg-muted/30 p-3">
+            <div className="rounded-2xl border border-border bg-muted/30 p-4">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Out point</span>
                 <span className="font-mono text-sm font-bold text-foreground">{formatTime(trimRange.end)}</span>
               </div>
-              <div className="flex items-center gap-1">
-                <Button variant="outline" size="icon-sm" className="size-7" onClick={() => nudgeEnd(-1000)}>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon-sm" className="size-9 rounded-full" onClick={() => nudgeEnd(-1000)}>
                   <ChevronLeft className="size-3" />
                 </Button>
-                <Button variant="outline" size="sm" className="h-7 flex-1 text-xs" onClick={setOutAtPlayhead}>
+                <Button variant="outline" size="sm" className="h-9 flex-1 rounded-full text-xs" onClick={setOutAtPlayhead}>
                   <Scissors className="size-3" />
                   Set at playhead
                 </Button>
-                <Button variant="outline" size="icon-sm" className="size-7" onClick={() => nudgeEnd(1000)}>
+                <Button variant="outline" size="icon-sm" className="size-9 rounded-full" onClick={() => nudgeEnd(1000)}>
                   <ChevronRight className="size-3" />
                 </Button>
               </div>
             </div>
           </div>
 
-          {/* Info */}
-          <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+          <div className="rounded-2xl border border-border bg-muted/20 p-4 text-xs text-muted-foreground">
             <p className="font-medium text-foreground">How trim works</p>
             <p className="mt-1 leading-relaxed">
               Drag the slider handles or use &ldquo;Set at playhead&rdquo; to define the in and out points of your video.

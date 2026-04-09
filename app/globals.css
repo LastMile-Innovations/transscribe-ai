@@ -133,4 +133,8 @@
       linear-gradient(180deg, color-mix(in oklab, var(--background) 92%, white) 0%, var(--background) 38%, color-mix(in oklab, var(--background) 94%, black) 100%);
     background-attachment: fixed;
   }
+
+  ::selection {
+    background: color-mix(in oklab, var(--brand) 24%, transparent);
+  }
 }

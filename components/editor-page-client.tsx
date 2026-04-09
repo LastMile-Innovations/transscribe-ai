@@ -2,16 +2,13 @@
 
 import { useEffect } from 'react'
 import { useState } from 'react'
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from '@/components/ui/resizable'
+import { Bot, Sparkles } from 'lucide-react'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 import { TopBar } from '@/components/top-bar'
 import { VideoPlayer } from '@/components/video-player'
 import { EditorTabs } from '@/components/editor-tabs'
 import { AIAssistant } from '@/components/ai-assistant'
+import { Button } from '@/components/ui/button'
 import { useApp } from '@/lib/app-context'
 import type { TranscriptSummary } from '@/lib/types'
 
@@ -72,39 +69,56 @@ export default function EditorPageClient({
     <div className="flex h-screen flex-col overflow-hidden bg-background">
       <TopBar onOpenAi={() => setAiOpen(true)} initialTranscriptList={initialTranscriptList} />
 
-      <ResizablePanelGroup orientation="horizontal" className="flex-1 overflow-hidden">
-        <ResizablePanel defaultSize={22} minSize={16} maxSize={35} className="hidden lg:block min-w-0">
-          <AIAssistant />
-        </ResizablePanel>
+      <div className="flex-1 overflow-hidden">
+        <div className="grid h-full grid-cols-1 gap-4 p-3 md:p-4 lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_22rem]">
+          <main className="flex min-h-0 flex-col overflow-hidden rounded-[1.25rem] border border-border/70 bg-background/80 shadow-[0_18px_70px_-36px_rgba(0,0,0,0.45)] backdrop-blur-sm">
+            <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Active Edit
+                </p>
+                <h2 className="text-sm font-semibold text-foreground md:text-base">
+                  Playback and transcript stay in view while you edit
+                </h2>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2 lg:hidden"
+                onClick={() => setAiOpen(true)}
+              >
+                <Bot className="size-4" />
+                Assistant
+              </Button>
+            </div>
 
-        <ResizableHandle withHandle className="hidden lg:flex" />
+            <div className="grid min-h-0 flex-1 grid-rows-[minmax(17rem,36vh)_minmax(0,1fr)] lg:grid-rows-[minmax(20rem,40vh)_minmax(0,1fr)]">
+              <div className="min-h-0 border-b border-border/60 bg-card/40">
+                <VideoPlayer />
+              </div>
+              <div className="min-h-0">
+                <EditorTabs />
+              </div>
+            </div>
+          </main>
 
-        <ResizablePanel defaultSize={78} minSize={50} className="min-w-0 flex-1">
-          <ResizablePanelGroup orientation="vertical" className="h-full">
-            <ResizablePanel 
-              defaultSize={48} 
-              minSize={28} 
-              maxSize={70} 
-              className="max-lg:!flex-none max-lg:min-h-[200px] max-lg:h-[38vh] max-lg:max-h-[50vh] min-h-0"
-            >
-              <VideoPlayer />
-            </ResizablePanel>
-
-            <ResizableHandle withHandle className="hidden lg:flex" />
-
-            <ResizablePanel 
-              defaultSize={52} 
-              minSize={30} 
-              className="max-lg:!flex-1 min-h-0"
-            >
-              <EditorTabs />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+          <aside className="hidden min-h-0 lg:flex lg:flex-col">
+            <div className="mb-4 rounded-[1.25rem] border border-border/70 bg-card/70 p-4 shadow-[0_18px_70px_-36px_rgba(0,0,0,0.45)] backdrop-blur-sm">
+              <div className="flex items-center gap-2 text-brand">
+                <Sparkles className="size-4" />
+                <p className="text-xs font-semibold uppercase tracking-[0.18em]">Utility Rail</p>
+              </div>
+              <p className="mt-2 text-sm font-medium text-foreground">Use AI, cleanup, and review tools without stealing space from the main edit.</p>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden rounded-[1.25rem] border border-border/70 bg-card/80 shadow-[0_18px_70px_-36px_rgba(0,0,0,0.45)] backdrop-blur-sm">
+              <AIAssistant />
+            </div>
+          </aside>
+        </div>
+      </div>
 
       <Sheet open={aiOpen} onOpenChange={setAiOpen}>
-        <SheetContent side="bottom" className="h-[85vh] p-0 lg:hidden">
+        <SheetContent side="right" className="w-full p-0 sm:max-w-xl lg:hidden">
           <AIAssistant />
         </SheetContent>
       </Sheet>
