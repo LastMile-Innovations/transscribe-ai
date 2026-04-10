@@ -92,6 +92,13 @@
       "when": 1775692000000,
       "tag": "0012_transcription_presets",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1775693000000,
+      "tag": "0013_projects_preferred_transcript_id",
+      "breakpoints": true
     }
   ]
 }

@@ -115,3 +115,39 @@ export function buildTranscriptExportFileName(title: string): {
     asciiFallback: `${asciiBase}-timestamps.json`,
   }
 }
+
+export function buildLegalTranscriptTxtFileName(title: string): {
+  unicodeName: string
+  asciiFallback: string
+} {
+  const base = title.trim() || 'transcript'
+  const asciiBase = asciiFilenameBase(base)
+  return {
+    unicodeName: `${base}-legal-numbered.txt`,
+    asciiFallback: `${asciiBase}-legal-numbered.txt`,
+  }
+}
+
+export function buildClipListTsvFileName(title: string): {
+  unicodeName: string
+  asciiFallback: string
+} {
+  const base = title.trim() || 'transcript'
+  const asciiBase = asciiFilenameBase(base)
+  return {
+    unicodeName: `${base}-clip-list.tsv`,
+    asciiFallback: `${asciiBase}-clip-list.tsv`,
+  }
+}
+
+export function buildLegalTranscriptPdfFileName(title: string): {
+  unicodeName: string
+  asciiFallback: string
+} {
+  const base = title.trim() || 'transcript'
+  const asciiBase = asciiFilenameBase(base)
+  return {
+    unicodeName: `${base}-legal-transcript.pdf`,
+    asciiFallback: `${asciiBase}-legal-transcript.pdf`,
+  }
+}

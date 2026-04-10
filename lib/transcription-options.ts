@@ -29,6 +29,29 @@ export const DEFAULT_TRANSCRIPTION_OPTIONS: TranscriptionRequestOptions = {
   redactPii: false,
 }
 
+/** Preset roster for speaker identification (known_values); append via UI dropdown. */
+export const PRESET_KNOWN_SPEAKER_NAMES = [
+  'Debra',
+  'Greyson',
+  'Jessica',
+  'Collin',
+  'Scott',
+  'Tonia',
+] as const
+
+/** Append a name to comma-separated known speakers; skips case-insensitive duplicates. */
+export function appendUniqueKnownSpeakerCsv(current: string, name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) return current
+  const parts = current
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+  const lower = trimmed.toLowerCase()
+  if (parts.some((p) => p.toLowerCase() === lower)) return current
+  return [...parts, trimmed].join(', ')
+}
+
 function normalizeWholeNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
     return Math.floor(value)

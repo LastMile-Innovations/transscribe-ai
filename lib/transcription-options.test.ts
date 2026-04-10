@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  appendUniqueKnownSpeakerCsv,
   normalizeTranscriptionOptions,
   validateTranscriptionOptions,
 } from './transcription-options'
@@ -20,6 +21,12 @@ test('normalizeTranscriptionOptions drops speaker-specific tuning when diarizati
   assert.equal(normalized.speakersExpected, undefined)
   assert.equal(normalized.minSpeakers, undefined)
   assert.equal(normalized.maxSpeakers, undefined)
+})
+
+test('appendUniqueKnownSpeakerCsv appends and dedupes case-insensitively', () => {
+  assert.equal(appendUniqueKnownSpeakerCsv('', 'Debra'), 'Debra')
+  assert.equal(appendUniqueKnownSpeakerCsv('Debra', 'Scott'), 'Debra, Scott')
+  assert.equal(appendUniqueKnownSpeakerCsv('Debra, Scott', 'debra'), 'Debra, Scott')
 })
 
 test('validateTranscriptionOptions rejects an invalid speaker range', () => {

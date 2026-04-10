@@ -1,5 +1,6 @@
 'use client'
 
+import type { KeyboardEvent } from 'react'
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { toast } from 'sonner'
 import { FilterX, FileText } from 'lucide-react'
@@ -29,10 +30,15 @@ import { SegmentRow, SegmentSaveState, formatTime } from './transcript-segment-r
 import { SpeakerManagerDialog } from './speaker-manager-dialog'
 
 import { TranscriptToolbar } from './transcript-toolbar'
+import { LegalDigestDialog } from './legal-digest-dialog'
+import { useAuthedFetch } from '@/lib/authed-fetch'
 
 export function TranscriptEditor() {
   const { state, dispatch } = useApp()
+  const authedFetch = useAuthedFetch()
   const [searchTerm, setSearchTerm] = useState('')
+  const [lastSearchJumpIndex, setLastSearchJumpIndex] = useState<number | null>(null)
+  const [legalDigestOpen, setLegalDigestOpen] = useState(false)
   const [speakerFilter, setSpeakerFilter] = useState<string | null>(null)
   const [showWordTimings, setShowWordTimings] = useState(false)
   const [segmentStates, setSegmentStates] = useState<Record<string, SegmentSaveState>>({})
@@ -95,6 +101,10 @@ export function TranscriptEditor() {
     }
   }, [speakerFilter, transcript])
 
+  useEffect(() => {
+    setLastSearchJumpIndex(null)
+  }, [searchTerm, speakerFilter])
+
   const seek = useCallback(
     (ms: number) => {
       const clamped = clampPlaybackTime(ms, projectDuration, state.trimRange)
@@ -116,6 +126,45 @@ export function TranscriptEditor() {
       return matchesSearch && matchesSpeaker
     })
   }, [speakerFilter, transcript, searchTerm])
+
+  useEffect(() => {
+    if (filtered.length === 0) {
+      setLastSearchJumpIndex(null)
+      return
+    }
+    setLastSearchJumpIndex((i) => (i === null ? null : Math.min(i, filtered.length - 1)))
+  }, [filtered.length])
+
+  const searchHasTerm = searchTerm.trim().length > 0
+  const searchMatchCount = searchHasTerm ? filtered.length : 0
+  const searchMatchOrdinal = searchMatchCount > 0 && lastSearchJumpIndex !== null ? lastSearchJumpIndex + 1 : 0
+
+  const goNextSearchMatch = useCallback(() => {
+    if (filtered.length === 0) return
+    const next = lastSearchJumpIndex === null ? 0 : (lastSearchJumpIndex + 1) % filtered.length
+    setLastSearchJumpIndex(next)
+    seek(filtered[next].start)
+  }, [filtered, lastSearchJumpIndex, seek])
+
+  const goPrevSearchMatch = useCallback(() => {
+    if (filtered.length === 0) return
+    const prev =
+      lastSearchJumpIndex === null
+        ? filtered.length - 1
+        : (lastSearchJumpIndex - 1 + filtered.length) % filtered.length
+    setLastSearchJumpIndex(prev)
+    seek(filtered[prev].start)
+  }, [filtered, lastSearchJumpIndex, seek])
+
+  const onSearchKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter' && searchTerm.trim() && filtered.length > 0) {
+        e.preventDefault()
+        goNextSearchMatch()
+      }
+    },
+    [filtered.length, goNextSearchMatch, searchTerm],
+  )
 
   const activeSegmentId = useMemo(() => {
     if (!transcript) return null
@@ -152,18 +201,28 @@ export function TranscriptEditor() {
     toast.success('Full transcript copied to clipboard.')
   }
 
-  const handleExportJson = useCallback(() => {
-    if (!transcript || !activeProjectId) {
-      toast.error('No transcript to export.')
-      return
-    }
+  const triggerTranscriptExport = useCallback(
+    (format: 'json' | 'txt' | 'clips' | 'pdf') => {
+      if (!transcript || !activeProjectId) {
+        toast.error('No transcript to export.')
+        return
+      }
+      const url = new URL(`/api/projects/${activeProjectId}/transcript-export`, window.location.origin)
+      url.searchParams.set('transcriptId', transcript.id)
+      if (format !== 'json') {
+        url.searchParams.set('format', format)
+      }
+      const anchor = document.createElement('a')
+      anchor.href = url.toString()
+      anchor.click()
+    },
+    [activeProjectId, transcript],
+  )
 
-    const url = new URL(`/api/projects/${activeProjectId}/transcript-export`, window.location.origin)
-    url.searchParams.set('transcriptId', transcript.id)
-    const anchor = document.createElement('a')
-    anchor.href = url.toString()
-    anchor.click()
-  }, [activeProjectId, transcript])
+  const handleExportJson = useCallback(() => triggerTranscriptExport('json'), [triggerTranscriptExport])
+  const handleExportNumberedTxt = useCallback(() => triggerTranscriptExport('txt'), [triggerTranscriptExport])
+  const handleExportClipList = useCallback(() => triggerTranscriptExport('clips'), [triggerTranscriptExport])
+  const handleExportPdf = useCallback(() => triggerTranscriptExport('pdf'), [triggerTranscriptExport])
 
   const openSpeakerManager = useCallback((speaker: string) => {
     setSelectedSpeaker(speaker)
@@ -378,6 +437,7 @@ export function TranscriptEditor() {
       <TranscriptToolbar
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
+        onSearchKeyDown={onSearchKeyDown}
         filteredCount={filtered.length}
         totalCount={transcript.segments.length}
         errorCount={errorCount}
@@ -386,6 +446,15 @@ export function TranscriptEditor() {
         jumpToActive={jumpToActive}
         handleExportClipboard={handleExportClipboard}
         handleExportJson={handleExportJson}
+        handleExportNumberedTxt={handleExportNumberedTxt}
+        handleExportClipList={handleExportClipList}
+        handleExportPdf={handleExportPdf}
+        onOpenLegalDigest={() => setLegalDigestOpen(true)}
+        searchHasTerm={searchHasTerm}
+        searchMatchCount={searchMatchCount}
+        searchMatchOrdinal={searchMatchOrdinal}
+        onSearchPrevMatch={goPrevSearchMatch}
+        onSearchNextMatch={goNextSearchMatch}
         speakerSummary={speakerSummary}
         setSelectedSpeaker={setSelectedSpeaker}
         setSpeakerRenameValue={setSpeakerRenameValue}
@@ -468,6 +537,17 @@ export function TranscriptEditor() {
         onApply={() => void applySpeakerRename()}
         busy={speakerRenameBusy}
       />
+
+      {activeProjectId && (
+        <LegalDigestDialog
+          open={legalDigestOpen}
+          onOpenChange={setLegalDigestOpen}
+          projectId={activeProjectId}
+          transcriptId={transcript.id}
+          fetchImpl={authedFetch}
+          onSeekToMs={seek}
+        />
+      )}
     </div>
   )
 }

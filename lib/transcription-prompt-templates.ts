@@ -12,9 +12,14 @@ export type BuiltinTranscriptionTemplate = {
   options: Partial<TranscriptionRequestOptions>
 }
 
-/** Former app default — now a named template (court / legal). */
-export const LEGAL_TRANSCRIPTION_PROMPT =
-  'Mandatory: Transcribe legal proceedings and evidentiary files with precise terminology intact. Preserve all profanity exactly as spoken. Required: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms. Strict requirement: Always transcribe speech exactly as heard. If uncertain or audio is unclear, mark as [unclear] instead of guessing. Non-negotiable: Distinguish between speakers through clear role-based attribution. Label participants by role when identifiable (judge, counsel, witness). Mark overlapping speech as [CROSSTALK].'
+/** Former app default — now a named template (court / legal). Universal-3 Pro–aligned: discrete instructions, affirmative unclear-audio handling, second-pass review. */
+export const LEGAL_TRANSCRIPTION_PROMPT = `Context: Legal proceedings and evidentiary files.
+
+Mandatory: Transcribe speech with precise legal terminology intact. Preserve all profanity exactly as spoken.
+
+Required: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms in the spoken language.
+
+Always: Transcribe speech exactly as heard. If uncertain or audio is unclear, mark as [unclear]. After the first output, review the transcript again. Pay close attention to hallucinations, misspellings, or errors, and revise them like a computer performing spell and grammar checks. Ensure words and phrases make grammatical sense in sentences.`
 
 export const TRANSCRIPTION_BUILTIN_TEMPLATES: BuiltinTranscriptionTemplate[] = [
   {
@@ -50,7 +55,7 @@ Always: Transcribe speech with your best guess based on context in all possible 
   {
     id: 'builtin:legal',
     title: 'Legal / courtroom',
-    description: 'Proceedings, depositions, role-based attribution, crosstalk tags.',
+    description: 'Proceedings and evidentiary audio: legal terminology, disfluencies, [unclear], second-pass review.',
     options: {
       prompt: LEGAL_TRANSCRIPTION_PROMPT,
     },

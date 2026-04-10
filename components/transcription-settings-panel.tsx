@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, type ReactNode } from 'react'
 import { Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -21,6 +22,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  appendUniqueKnownSpeakerCsv,
+  PRESET_KNOWN_SPEAKER_NAMES,
+} from '@/lib/transcription-options'
 
 export function TranscriptionSettingsPanel({
   speechModel,
@@ -49,6 +54,9 @@ export function TranscriptionSettingsPanel({
   setAutoTranscribe,
   onResetRecommended,
   onMarkCustom,
+  showAutoTranscribe = true,
+  settingsIntro,
+  defaultSettingsOpen = false,
 }: {
   speechModel: string
   setSpeechModel: (value: string) => void
@@ -77,12 +85,24 @@ export function TranscriptionSettingsPanel({
   onResetRecommended: () => void
   /** When the user edits any control, clear the preset picker to Custom. */
   onMarkCustom?: () => void
+  /** Hide the upload-only auto-transcribe toggle (e.g. editor re-run dialog). */
+  showAutoTranscribe?: boolean
+  /** Replace the default intro under the accordion title. */
+  settingsIntro?: ReactNode
+  /** Start with settings expanded (useful in dialogs). */
+  defaultSettingsOpen?: boolean
 }) {
   const mark = onMarkCustom ?? (() => {})
+  const [presetSpeakerSelectKey, setPresetSpeakerSelectKey] = useState(0)
 
   return (
     <div className="mb-0">
-      <Accordion type="single" collapsible className="library-panel-accordion w-full px-3 md:px-6">
+      <Accordion
+        type="single"
+        collapsible
+        className="library-panel-accordion w-full px-3 md:px-6"
+        defaultValue={defaultSettingsOpen ? 'settings' : undefined}
+      >
         <AccordionItem value="settings" className="border-0">
           <AccordionTrigger className="py-4 text-sm font-semibold hover:no-underline md:py-5">
             <div className="flex items-center gap-3 text-left">
@@ -96,10 +116,12 @@ export function TranscriptionSettingsPanel({
             </div>
           </AccordionTrigger>
           <AccordionContent className="pb-6">
-            <p className="mb-4 text-xs text-muted-foreground">
-              These options apply when you click <span className="font-medium text-foreground">Transcribe</span>{' '}
-              on a file marked “Needs transcript”.
-            </p>
+            {settingsIntro ?? (
+              <p className="mb-4 text-xs text-muted-foreground">
+                These options apply when you click <span className="font-medium text-foreground">Transcribe</span>{' '}
+                on a file marked “Needs transcript”.
+              </p>
+            )}
             <div className="mb-5 flex flex-col gap-3 rounded-[1.35rem] border border-white/60 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--color-brand)_10%,white),color-mix(in_oklab,var(--color-background)_96%,white))] p-4 md:flex-row md:items-center md:justify-between">
               <div className="space-y-1">
                 <p className="text-sm font-medium">Recommended default workflow</p>
@@ -212,8 +234,27 @@ export function TranscriptionSettingsPanel({
 
                     <div className="flex flex-col gap-2">
                       <Label className="text-[11px]">Identified Names (Known Values)</Label>
+                      <Select
+                        key={presetSpeakerSelectKey}
+                        onValueChange={(name) => {
+                          mark()
+                          setKnownSpeakers(appendUniqueKnownSpeakerCsv(knownSpeakers, name))
+                          setPresetSpeakerSelectKey((k) => k + 1)
+                        }}
+                      >
+                        <SelectTrigger className="h-8 border-white/60 bg-background/80 text-xs">
+                          <SelectValue placeholder="Add preset name…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PRESET_KNOWN_SPEAKER_NAMES.map((n) => (
+                            <SelectItem key={n} value={n} className="text-xs">
+                              {n}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <Input
-                        placeholder="John Doe, Jane Smith..."
+                        placeholder="Or type: John Doe, Jane Smith..."
                         value={knownSpeakers}
                         onChange={(e) => {
                           mark()
@@ -313,7 +354,9 @@ export function TranscriptionSettingsPanel({
                     <div className="flex flex-col gap-1">
                       <Label className="text-xs font-medium">PII Redaction</Label>
                       <p className="text-[10px] text-muted-foreground leading-tight">
-                        Identify and mask person names, SSNs, phone numbers, and addresses.
+                        Identify and mask person names, SSNs, phone numbers, and addresses in the transcript
+                        returned from the speech service. Use for confidential drafts; combine with your own
+                        privilege and production workflow for filings.
                       </p>
                     </div>
                     <Switch
@@ -326,24 +369,26 @@ export function TranscriptionSettingsPanel({
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-4 rounded-[1.25rem] border border-brand/20 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--color-brand)_10%,white),white)] p-4 transition-colors">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex flex-col gap-1">
-                      <Label className="text-xs font-medium">Auto-transcribe after upload</Label>
-                      <p className="text-[10px] text-muted-foreground leading-tight">
-                        Automatically start transcription using these settings when a new video
-                        finishes uploading.
-                      </p>
+                {showAutoTranscribe ? (
+                  <div className="flex flex-col gap-4 rounded-[1.25rem] border border-brand/20 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--color-brand)_10%,white),white)] p-4 transition-colors">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex flex-col gap-1">
+                        <Label className="text-xs font-medium">Auto-transcribe after upload</Label>
+                        <p className="text-[10px] text-muted-foreground leading-tight">
+                          Automatically start transcription using these settings when a new video
+                          finishes uploading.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={autoTranscribe}
+                        onCheckedChange={(v) => {
+                          mark()
+                          setAutoTranscribe(v)
+                        }}
+                      />
                     </div>
-                    <Switch
-                      checked={autoTranscribe}
-                      onCheckedChange={(v) => {
-                        mark()
-                        setAutoTranscribe(v)
-                      }}
-                    />
                   </div>
-                </div>
+                ) : null}
               </div>
             </div>
           </AccordionContent>

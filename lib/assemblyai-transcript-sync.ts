@@ -172,12 +172,17 @@ const READY_PROJECT_AFTER_TRANSCRIPT = {
   pendingAutoTranscriptionOptions: null as null,
 }
 
-async function markProjectReadyAfterCompletedTranscript(projectId: string, durationMs: number): Promise<void> {
+async function markProjectReadyAfterCompletedTranscript(
+  projectId: string,
+  durationMs: number,
+  preferredTranscriptId: string,
+): Promise<void> {
   await db
     .update(projects)
     .set({
       ...READY_PROJECT_AFTER_TRANSCRIPT,
       duration: durationMs,
+      preferredTranscriptId,
     })
     .where(eq(projects.id, projectId))
 }
@@ -213,7 +218,7 @@ async function persistCompletedTranscript(
         transcriptSyncContext(assemblyAiIdForInsert, legacy.assemblyAiTranscriptId),
       )
     ) {
-      await markProjectReadyAfterCompletedTranscript(projectId, durationMs)
+      await markProjectReadyAfterCompletedTranscript(projectId, durationMs, legacy.id)
     }
 
     return { transcriptId: legacy.id, duration: durationMs, speechModelUsed }
@@ -245,7 +250,7 @@ async function persistCompletedTranscript(
       transcriptSyncContext(assemblyAiIdForInsert, dbTranscript.assemblyAiTranscriptId),
     )
   ) {
-    await markProjectReadyAfterCompletedTranscript(projectId, durationMs)
+    await markProjectReadyAfterCompletedTranscript(projectId, durationMs, dbTranscript.id)
   }
 
   return { transcriptId: dbTranscript.id, duration: durationMs, speechModelUsed }

@@ -137,6 +137,10 @@ export const projects = pgTable(
       (): AnyPgColumn => transcripts.id,
       { onDelete: 'set null' },
     ),
+    preferredTranscriptId: uuid('preferred_transcript_id').references(
+      (): AnyPgColumn => transcripts.id,
+      { onDelete: 'set null' },
+    ),
     workspaceProjectId: text('workspace_project_id')
       .notNull()
       .references(() => workspaceProjects.id, { onDelete: 'cascade' }),

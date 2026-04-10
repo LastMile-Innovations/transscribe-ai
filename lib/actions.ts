@@ -52,6 +52,7 @@ import {
   validateTranscriptionOptions,
   type TranscriptionRequestOptions,
 } from './transcription-options'
+import { getProjectDataTranscriptLoadStrategy } from './project-transcript-resolution'
 import {
   assertProjectAccess,
   assertWorkspaceAccess,
@@ -68,13 +69,34 @@ export async function getProjectData(projectId: string, transcriptId?: string | 
   if (projRows.length === 0) return null
   const proj = projRows[0]
 
+  const loadStrategy = getProjectDataTranscriptLoadStrategy(transcriptId, proj.preferredTranscriptId)
+
   let transcriptRows
-  if (transcriptId) {
+  if (loadStrategy === 'by_explicit_id') {
     transcriptRows = await db
       .select()
       .from(transcripts)
-      .where(and(eq(transcripts.projectId, projectId), eq(transcripts.id, transcriptId)))
+      .where(and(eq(transcripts.projectId, projectId), eq(transcripts.id, transcriptId!)))
       .limit(1)
+  } else if (loadStrategy === 'by_preferred_or_newest') {
+    transcriptRows = await db
+      .select()
+      .from(transcripts)
+      .where(
+        and(
+          eq(transcripts.projectId, projectId),
+          eq(transcripts.id, proj.preferredTranscriptId!),
+        ),
+      )
+      .limit(1)
+    if (transcriptRows.length === 0) {
+      transcriptRows = await db
+        .select()
+        .from(transcripts)
+        .where(eq(transcripts.projectId, projectId))
+        .orderBy(desc(transcripts.createdAt))
+        .limit(1)
+    }
   } else {
     transcriptRows = await db
       .select()
@@ -110,6 +132,22 @@ export async function getProjectData(projectId: string, transcriptId?: string | 
     transcript: transcriptData,
     overlays: overlayRows.map(textOverlayRowToOverlay),
   }
+}
+
+export async function setPreferredTranscriptAction(projectId: string, transcriptId: string): Promise<void> {
+  await assertProjectAccess(projectId, 'editor')
+
+  const [row] = await db
+    .select({ id: transcripts.id })
+    .from(transcripts)
+    .where(and(eq(transcripts.projectId, projectId), eq(transcripts.id, transcriptId)))
+    .limit(1)
+
+  if (!row) {
+    throw new Error('Transcript not found for this project')
+  }
+
+  await db.update(projects).set({ preferredTranscriptId: transcriptId }).where(eq(projects.id, projectId))
 }
 
 export async function listTranscriptsForMediaAction(mediaId: string): Promise<TranscriptSummary[]> {

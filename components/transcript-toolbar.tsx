@@ -1,5 +1,6 @@
 'use client'
 
+import type { KeyboardEvent } from 'react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +16,12 @@ import {
   Search,
   X,
   MoreVertical,
+  FileText,
+  Table,
+  FileType2,
+  Scale,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -31,6 +38,7 @@ import { getSpeakerColorClass } from '@/lib/transcript-editing'
 export function TranscriptToolbar({
   searchTerm,
   setSearchTerm,
+  onSearchKeyDown,
   filteredCount,
   totalCount,
   errorCount,
@@ -39,6 +47,15 @@ export function TranscriptToolbar({
   jumpToActive,
   handleExportClipboard,
   handleExportJson,
+  handleExportNumberedTxt,
+  handleExportClipList,
+  handleExportPdf,
+  onOpenLegalDigest,
+  searchHasTerm,
+  searchMatchCount,
+  searchMatchOrdinal,
+  onSearchPrevMatch,
+  onSearchNextMatch,
   speakerSummary,
   setSelectedSpeaker,
   setSpeakerRenameValue,
@@ -50,6 +67,7 @@ export function TranscriptToolbar({
 }: {
   searchTerm: string
   setSearchTerm: (term: string) => void
+  onSearchKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
   filteredCount: number
   totalCount: number
   errorCount: number
@@ -58,6 +76,15 @@ export function TranscriptToolbar({
   jumpToActive: () => void
   handleExportClipboard: () => void
   handleExportJson: () => void
+  handleExportNumberedTxt: () => void
+  handleExportClipList: () => void
+  handleExportPdf: () => void
+  onOpenLegalDigest: () => void
+  searchHasTerm: boolean
+  searchMatchCount: number
+  searchMatchOrdinal: number
+  onSearchPrevMatch: () => void
+  onSearchNextMatch: () => void
   speakerSummary: Array<{ name: string; count: number }>
   setSelectedSpeaker: (speaker: string) => void
   setSpeakerRenameValue: (value: string) => void
@@ -81,6 +108,7 @@ export function TranscriptToolbar({
                 placeholder="Search transcript or speakers..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={onSearchKeyDown}
                 className="pr-1 text-xs"
               />
               {searchTerm && (
@@ -100,6 +128,33 @@ export function TranscriptToolbar({
           <Badge variant="outline" className="h-8 rounded-full px-2.5 font-mono text-[11px] text-muted-foreground">
             {filteredCount} / {totalCount}
           </Badge>
+          {searchHasTerm && searchMatchCount > 0 && (
+            <div className="flex items-center gap-1">
+              <Badge variant="secondary" className="h-8 rounded-full px-2 font-mono text-[11px]">
+                {searchMatchOrdinal > 0 ? `Match ${searchMatchOrdinal}` : 'Match —'} / {searchMatchCount}
+              </Badge>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                className="size-8 rounded-full"
+                onClick={onSearchPrevMatch}
+                aria-label="Previous search match"
+              >
+                <ChevronUp className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                className="size-8 rounded-full"
+                onClick={onSearchNextMatch}
+                aria-label="Next search match"
+              >
+                <ChevronDown className="size-4" />
+              </Button>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -119,13 +174,24 @@ export function TranscriptToolbar({
             )}
           </div>
 
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 rounded-full px-3 text-xs"
+            onClick={onOpenLegalDigest}
+          >
+            <Scale className="mr-1.5 size-3.5" />
+            Legal digest
+          </Button>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon-sm" className="size-8 rounded-full">
                 <MoreVertical className="size-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuContent align="end" className="w-56">
               {activeSegmentId && (
                 <DropdownMenuItem onClick={jumpToActive}>
                   <Crosshair className="mr-2 size-4" />
@@ -139,6 +205,18 @@ export function TranscriptToolbar({
               <DropdownMenuItem onClick={handleExportJson}>
                 <Download className="mr-2 size-4" />
                 Export JSON
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExportNumberedTxt}>
+                <FileText className="mr-2 size-4" />
+                Export numbered text
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExportClipList}>
+                <Table className="mr-2 size-4" />
+                Export clip list (TSV)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExportPdf}>
+                <FileType2 className="mr-2 size-4" />
+                Export PDF
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {
