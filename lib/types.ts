@@ -1,5 +1,6 @@
 import type { OverlayFontWeight, ProjectStatus } from './db/schema'
 import type { StoredMediaMetadata } from './media-metadata'
+import type { TranscriptionRequestOptions } from './transcription-options'
 
 export type { OverlayFontWeight, ProjectStatus }
 
@@ -57,6 +58,8 @@ export interface VideoProject {
   folderId: string | null
   caseId?: string | null
   exhibitNumber?: string | null
+  /** When set, used for auto-transcribe after prepare and for Transcribe on this card (overrides library-wide form). */
+  pendingAutoTranscriptionOptions?: TranscriptionRequestOptions | null
 }
 
 export interface TranscriptWord {

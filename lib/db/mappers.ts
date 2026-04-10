@@ -23,6 +23,7 @@ export function projectRowToVideoProject(row: ProjectRow): VideoProject {
     folderId: row.folderId,
     caseId: row.caseId,
     exhibitNumber: row.exhibitNumber,
+    pendingAutoTranscriptionOptions: row.pendingAutoTranscriptionOptions ?? undefined,
   }
 }
 

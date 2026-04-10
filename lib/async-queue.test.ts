@@ -44,3 +44,30 @@ test('createConcurrencyQueue can cancel a queued entry before it starts', async 
   await first.promise
   await assert.rejects(second.promise, /Queue entry cancelled\./)
 })
+
+test('setMaxConcurrency raises the cap and drains waiting tasks', async () => {
+  const queue = createConcurrencyQueue(1)
+  let active = 0
+  let maxActive = 0
+
+  const runTask = () =>
+    new Promise<void>((resolve) => {
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      setTimeout(() => {
+        active -= 1
+        resolve()
+      }, 15)
+    })
+
+  const p1 = queue.enqueue(runTask).promise
+  const p2 = queue.enqueue(runTask).promise
+  const p3 = queue.enqueue(runTask).promise
+
+  queue.setMaxConcurrency(3)
+
+  await Promise.all([p1, p2, p3])
+
+  assert.equal(maxActive, 3)
+  assert.deepEqual(queue.stats(), { running: 0, queued: 0 })
+})

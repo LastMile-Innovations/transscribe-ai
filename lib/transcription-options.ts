@@ -29,27 +29,49 @@ export const DEFAULT_TRANSCRIPTION_OPTIONS: TranscriptionRequestOptions = {
   redactPii: false,
 }
 
-/** Preset roster for speaker identification (known_values); append via UI dropdown. */
+/** Preset roster for Speaker Identification (known_values); append via UI dropdown. */
 export const PRESET_KNOWN_SPEAKER_NAMES = [
-  'Debra',
-  'Greyson',
-  'Jessica',
-  'Collin',
-  'Scott',
+  'Greyson Paynter',
+  'Debra Paynter',
+  'Jessica Clark',
+  'Collin Clark',
+  'Alana Martinez',
+  'Scott Lepman',
   'Tonia',
 ] as const
+
+export function parseKnownSpeakersCsv(csv: string): string[] {
+  return csv
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+}
 
 /** Append a name to comma-separated known speakers; skips case-insensitive duplicates. */
 export function appendUniqueKnownSpeakerCsv(current: string, name: string): string {
   const trimmed = name.trim()
   if (!trimmed) return current
-  const parts = current
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s !== '')
+  const parts = parseKnownSpeakersCsv(current)
   const lower = trimmed.toLowerCase()
   if (parts.some((p) => p.toLowerCase() === lower)) return current
   return [...parts, trimmed].join(', ')
+}
+
+export function removeFromKnownSpeakersCsv(current: string, nameToRemove: string): string {
+  const target = nameToRemove.trim().toLowerCase()
+  if (!target) return current
+  return parseKnownSpeakersCsv(current)
+    .filter((p) => p.toLowerCase() !== target)
+    .join(', ')
+}
+
+export function togglePresetInKnownSpeakersCsv(
+  current: string,
+  presetName: string,
+  checked: boolean,
+): string {
+  if (checked) return appendUniqueKnownSpeakerCsv(current, presetName)
+  return removeFromKnownSpeakersCsv(current, presetName)
 }
 
 function normalizeWholeNumber(value: unknown): number | undefined {

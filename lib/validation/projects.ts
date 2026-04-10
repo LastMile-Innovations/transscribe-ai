@@ -47,6 +47,7 @@ export const patchProjectBodySchema = z
     title: z.string().trim().min(1).optional(),
     thumbnailUrl: z.string().trim().min(1).optional(),
     folderId: z.string().nullable().optional(),
+    pendingAutoTranscriptionOptions: z.any().nullable().optional(),
   })
   .refine(
     (o) =>
@@ -63,7 +64,8 @@ export const patchProjectBodySchema = z
       o.duration !== undefined ||
       o.title !== undefined ||
       o.thumbnailUrl !== undefined ||
-      o.folderId !== undefined,
+      o.folderId !== undefined ||
+      o.pendingAutoTranscriptionOptions !== undefined,
     { message: 'At least one field required' },
   )
 

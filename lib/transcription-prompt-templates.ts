@@ -21,6 +21,21 @@ Required: Preserve linguistic speech patterns including disfluencies, filler wor
 
 Always: Transcribe speech exactly as heard. If uncertain or audio is unclear, mark as [unclear]. After the first output, review the transcript again. Pay close attention to hallucinations, misspellings, or errors, and revise them like a computer performing spell and grammar checks. Ensure words and phrases make grammatical sense in sentences.`
 
+/**
+ * Payment-counter / rent-tender recordings. Pair with Speaker Diarization + Speaker Identification
+ * (known_values); do not rely on the prompt for speaker names — AssemblyAI treats prompt-based
+ * attribution as experimental.
+ */
+export const PAYMENT_TENDER_TRANSCRIPTION_PROMPT = `Context: A tenant recording a rent payment attempt at a property management office. The audio may be muffled through glass or contain outdoor background noise.
+
+Key terms to prioritize: Greyson, Debra, Jessica, Collin, Alana, Scott Lepman, Tonia, tender, folio, Good Sam, reference number, 14-day notice, upper management, instructions from the owner.
+
+Mandatory: Transcribe verbatim. Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms in the spoken language. Pay extreme attention to repeated words indicating emotional distress (e.g., repeating the word "help").
+
+Required: When multiple speakers talk simultaneously, or one speaker interrupts another, mark crosstalk segments as [CROSSTALK]. Include audio event markers for contextually significant non-speech sounds like [door shuts], [papers rustling], or [footsteps].
+
+Always: Transcribe speech exactly as heard. If uncertain or audio is unclear, mark as [unclear]. After the first output, review the transcript again. Pay close attention to hallucinations, misspellings, or errors, and revise them like a computer performing spell and grammar checks. Ensure words and phrases make grammatical sense in sentences.`
+
 export const TRANSCRIPTION_BUILTIN_TEMPLATES: BuiltinTranscriptionTemplate[] = [
   {
     id: 'builtin:recommended',
@@ -58,6 +73,15 @@ Always: Transcribe speech with your best guess based on context in all possible 
     description: 'Proceedings and evidentiary audio: legal terminology, disfluencies, [unclear], second-pass review.',
     options: {
       prompt: LEGAL_TRANSCRIPTION_PROMPT,
+    },
+  },
+  {
+    id: 'builtin:payment-tender',
+    title: 'Payment / tender (office counter)',
+    description:
+      'Counter recordings: jargon and distress repeats, [CROSSTALK], non-speech markers, [unclear], review pass. Set who is in each video on the file card (Speaker Identification).',
+    options: {
+      prompt: PAYMENT_TENDER_TRANSCRIPTION_PROMPT,
     },
   },
   {

@@ -26,6 +26,7 @@ import { useLibraryUploads } from '@/components/library/use-library-uploads'
 import { useLibraryUrlSync } from '@/components/library/use-library-url-sync'
 import { useWorkspaceMembers } from '@/components/library/use-workspace-members'
 import { useApp } from '@/lib/app-context'
+import { errorMessageFromResponse } from '@/lib/api-error-message'
 import {
   createFolderAction,
   createWorkspaceProjectAction,
@@ -44,6 +45,7 @@ import {
   DEFAULT_TRANSCRIPTION_OPTIONS,
   DEFAULT_TRANSCRIPTION_PROMPT,
   normalizeTranscriptionOptions,
+  type TranscriptionRequestOptions,
 } from '@/lib/transcription-options'
 import {
   getBuiltinTemplateById,
@@ -54,11 +56,11 @@ import {
 import { useDebouncedValue } from '@/lib/use-debounced-value'
 import type {
   BrowseFilter,
+  VideoProject,
   WorkspaceMemberRow,
   WorkspaceProject,
   WorkspaceTreeData,
 } from '@/lib/types'
-import type { TranscriptionRequestOptions } from '@/lib/transcription-options'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -239,6 +241,35 @@ export function LibraryPageClient({
   const markTranscriptionCustom = useCallback(() => {
     setSelectedTranscriptionPresetKey('custom')
   }, [])
+
+  const savePerFileTranscriptionOptions = useCallback(
+    async (projectId: string, options: TranscriptionRequestOptions) => {
+      const res = await authedFetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pendingAutoTranscriptionOptions: options }),
+      })
+      if (!res.ok) {
+        throw new Error(await errorMessageFromResponse(res, 'Could not save speaker list.'))
+      }
+      const updated = (await res.json()) as VideoProject
+      dispatch({
+        type: 'UPDATE_PROJECT',
+        id: projectId,
+        updates: { pendingAutoTranscriptionOptions: updated.pendingAutoTranscriptionOptions },
+      })
+      setTree((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          media: prev.media.map((m) =>
+            m.id === projectId ? { ...m, pendingAutoTranscriptionOptions: updated.pendingAutoTranscriptionOptions } : m,
+          ),
+        }
+      })
+    },
+    [authedFetch, dispatch, setTree],
+  )
 
   useEffect(() => {
     if (!wpId || !user?.id) {
@@ -462,10 +493,14 @@ export function LibraryPageClient({
           }
         })
 
+        const transcribeOptions = proj.pendingAutoTranscriptionOptions
+          ? normalizeTranscriptionOptions(proj.pendingAutoTranscriptionOptions)
+          : currentTranscriptionOptions()
+
         const result = await runTranscriptionFlow({
           projectId,
           fetchImpl: authedFetch,
-          options: currentTranscriptionOptions(),
+          options: transcribeOptions,
           onProgress: (pct) => {
             dispatch({
               type: 'UPDATE_PROJECT',
@@ -748,10 +783,15 @@ export function LibraryPageClient({
       })
 
       try {
+        const prepareOpts =
+          project.pendingAutoTranscriptionOptions != null
+            ? normalizeTranscriptionOptions(project.pendingAutoTranscriptionOptions)
+            : currentTranscriptionOptions()
+
         const updated = await queueProjectPreparationAction({
           projectId,
           originalKey,
-          ...(autoTranscribe ? { transcriptionOptions: currentTranscriptionOptions() } : {}),
+          ...(autoTranscribe ? { transcriptionOptions: prepareOpts } : {}),
         })
         updateProjectLocally(projectId, {
           status: updated.status,
@@ -979,6 +1019,8 @@ export function LibraryPageClient({
                         onRetryPrepare={viewerLocked ? undefined : retryPrepare}
                         onCancelUpload={viewerLocked ? undefined : cancelUpload}
                         onDeleteMedia={viewerLocked ? undefined : deleteMediaProject}
+                        getTranscriptionOptionsForRoster={viewerLocked ? undefined : currentTranscriptionOptions}
+                        onSavePerFileTranscription={viewerLocked ? undefined : savePerFileTranscriptionOptions}
                       />
                     ))
                   )}

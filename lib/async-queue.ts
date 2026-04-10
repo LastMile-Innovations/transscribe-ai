@@ -8,7 +8,7 @@ type QueueEntry<T> = {
 }
 
 export function createConcurrencyQueue(concurrency: number) {
-  const maxConcurrent = Math.max(1, Math.trunc(concurrency) || 1)
+  let maxConcurrent = Math.max(1, Math.trunc(concurrency) || 1)
   let running = 0
   const pending: Array<QueueEntry<unknown>> = []
 
@@ -60,6 +60,10 @@ export function createConcurrencyQueue(concurrency: number) {
           entry.cancelled = true
         },
       }
+    },
+    setMaxConcurrency(n: number) {
+      maxConcurrent = Math.max(1, Math.trunc(n) || 1)
+      drain()
     },
     stats() {
       return {

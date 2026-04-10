@@ -15,7 +15,11 @@ import { libraryUploadQueueConcurrency } from '@/lib/upload-queue-concurrency'
 import { uploadWakeLockAcquire, uploadWakeLockRelease } from '@/lib/upload-wake-lock'
 import { inferVideoContentType, isVideoFileCandidate } from '@/lib/video-upload-mime'
 
+const UPLOAD_REFRESH_DEBOUNCE_MS = 400
+
 type AuthedFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
+type UploadConcurrencyQueue = ReturnType<typeof createConcurrencyQueue>
 
 export function useLibraryUploads({
   wpId,
@@ -32,7 +36,26 @@ export function useLibraryUploads({
   setTree: React.Dispatch<React.SetStateAction<WorkspaceTreeData | null>>
   refreshServerData: () => void
 }) {
-  const uploadQueueRef = useRef(createConcurrencyQueue(libraryUploadQueueConcurrency()))
+  const uploadQueueRef = useRef<UploadConcurrencyQueue | null>(null)
+  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const ensureUploadQueue = useCallback((): UploadConcurrencyQueue => {
+    if (!uploadQueueRef.current) {
+      uploadQueueRef.current = createConcurrencyQueue(libraryUploadQueueConcurrency())
+    }
+    return uploadQueueRef.current
+  }, [])
+
+  const scheduleRefreshServerData = useCallback(() => {
+    if (refreshDebounceRef.current !== null) {
+      clearTimeout(refreshDebounceRef.current)
+    }
+    refreshDebounceRef.current = setTimeout(() => {
+      refreshDebounceRef.current = null
+      refreshServerData()
+    }, UPLOAD_REFRESH_DEBOUNCE_MS)
+  }, [refreshServerData])
+
   const activeUploadsRef = useRef<Map<string, UploadHandle>>(new Map())
   const queuedUploadsRef = useRef<
     Map<string, { cancel: () => void; persisted: boolean; cancelled: boolean }>
@@ -74,6 +97,15 @@ export function useLibraryUploads({
     return () => {
       window.removeEventListener('beforeunload', onBeforeUnload)
       document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (refreshDebounceRef.current !== null) {
+        clearTimeout(refreshDebounceRef.current)
+        refreshDebounceRef.current = null
+      }
     }
   }, [])
 
@@ -347,7 +379,7 @@ export function useLibraryUploads({
             ? 'Upload complete. Preview is ready while the editor MP4 prepares in the background.'
             : 'Upload complete. Preparing the editor MP4 in the background.',
         )
-        refreshServerData()
+        scheduleRefreshServerData()
       } catch (error) {
         console.error('Upload error:', error)
         const message = error instanceof Error ? error.message : 'Upload failed. Please try again.'
@@ -394,7 +426,7 @@ export function useLibraryUploads({
         queuedUploadsRef.current.delete(input.project.id)
       }
     },
-    [authedFetch, refreshServerData, removeProjectLocally, updateProjectLocally, wpId],
+    [authedFetch, removeProjectLocally, scheduleRefreshServerData, updateProjectLocally, wpId],
   )
 
   const queueSingleFile = useCallback(
@@ -415,7 +447,7 @@ export function useLibraryUploads({
       })
       addProjectLocally(placeholderProject)
 
-      const queuedTask = uploadQueueRef.current.enqueue(async () => {
+      const queuedTask = ensureUploadQueue().enqueue(async () => {
         await runWithUploadSession(async () => {
           updateProjectLocally(id, {
             uploadQueueState: 'running',
@@ -517,6 +549,7 @@ export function useLibraryUploads({
       browseFilter,
       removeProjectLocally,
       runQueuedUpload,
+      ensureUploadQueue,
       runWithUploadSession,
       updateProjectLocally,
       wpId,
@@ -553,9 +586,8 @@ export function useLibraryUploads({
       const mobileHint =
         'Keep this tab open and in the foreground for large files; plug in if you can. On iOS, Low Power Mode may slow uploads. We keep your screen awake while transferring when the browser allows.'
 
-      const maxParallel = libraryUploadQueueConcurrency()
       if (validFiles.length > 1) {
-        toast.info(`Preparing ${validFiles.length} uploads (up to ${maxParallel} at a time)…`, {
+        toast.info(`Uploading ${validFiles.length} videos…`, {
           description: mobileHint,
           duration: 10_000,
         })

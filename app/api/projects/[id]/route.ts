@@ -12,6 +12,10 @@ import { projects } from '@/lib/db/schema'
 import type { StoredMediaMetadata } from '@/lib/media-metadata'
 import { storageObjectKeysToDeleteForProject } from '@/lib/media-keys'
 import { deleteStorageObjectsByKeys } from '@/lib/s3-storage'
+import {
+  normalizeTranscriptionOptions,
+  validateTranscriptionOptions,
+} from '@/lib/transcription-options'
 import { patchProjectBodySchema } from '@/lib/validation/projects'
 import { requireProjectAccessForRoute } from '@/lib/workspace-access'
 
@@ -34,6 +38,22 @@ export async function PATCH(
     }
     const body = parsed.data
 
+    let pendingAutoTranscriptionPatch: ReturnType<typeof normalizeTranscriptionOptions> | null | undefined
+    if (body.pendingAutoTranscriptionOptions !== undefined) {
+      if (body.pendingAutoTranscriptionOptions === null) {
+        pendingAutoTranscriptionPatch = null
+      } else {
+        const normalized = normalizeTranscriptionOptions(
+          body.pendingAutoTranscriptionOptions as Parameters<typeof normalizeTranscriptionOptions>[0],
+        )
+        const invalid = validateTranscriptionOptions(normalized)
+        if (invalid) {
+          return NextResponse.json({ error: invalid }, { status: 400 })
+        }
+        pendingAutoTranscriptionPatch = normalized
+      }
+    }
+
     const patch: Partial<{
       fileUrl: string | null
       originalFileUrl: string | null
@@ -49,6 +69,7 @@ export async function PATCH(
       title: string
       thumbnailUrl: string
       folderId: string | null
+      pendingAutoTranscriptionOptions: ReturnType<typeof normalizeTranscriptionOptions> | null
     }> = {
       ...(body.fileUrl !== undefined ? { fileUrl: body.fileUrl } : {}),
       ...(body.originalFileUrl !== undefined ? { originalFileUrl: body.originalFileUrl } : {}),
@@ -70,6 +91,9 @@ export async function PATCH(
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(body.thumbnailUrl !== undefined ? { thumbnailUrl: body.thumbnailUrl } : {}),
       ...(body.folderId !== undefined ? { folderId: body.folderId } : {}),
+      ...(pendingAutoTranscriptionPatch !== undefined
+        ? { pendingAutoTranscriptionOptions: pendingAutoTranscriptionPatch }
+        : {}),
     }
 
     if (Object.keys(patch).length === 0) {

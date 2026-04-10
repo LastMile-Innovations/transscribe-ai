@@ -43,6 +43,8 @@ import { formatDataSize, formatDurationMs, formatEtaSeconds, formatTransferSpeed
 import { mediaSummaryLine, preferredDurationMs } from '@/lib/media-metadata'
 import { canRetryPrepare, isPrepareBusyStatus, projectHasPreparedEdit } from '@/lib/project-prepare'
 import { cn } from '@/lib/utils'
+import { ProjectSpeakerRosterEditor } from '@/components/project-speaker-roster-editor'
+import type { TranscriptionRequestOptions } from '@/lib/transcription-options'
 
 function VaultUploadStats({ up }: { up: NonNullable<VideoProject['uploadProgress']> }) {
   const etaSec =
@@ -100,6 +102,9 @@ export type LibraryProjectCardProps = {
   onRetryPrepare?: (mediaId: string) => void
   onCancelUpload?: (mediaId: string) => void
   onDeleteMedia?: (mediaId: string) => Promise<void>
+  /** Baseline library transcription options when merging per-file speaker roster. */
+  getTranscriptionOptionsForRoster?: () => TranscriptionRequestOptions
+  onSavePerFileTranscription?: (mediaId: string, options: TranscriptionRequestOptions) => Promise<void>
 }
 
 function LibraryProjectCardInner({
@@ -112,6 +117,8 @@ function LibraryProjectCardInner({
   onRetryPrepare,
   onCancelUpload,
   onDeleteMedia,
+  getTranscriptionOptionsForRoster,
+  onSavePerFileTranscription,
 }: LibraryProjectCardProps) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState('')
@@ -342,6 +349,19 @@ function LibraryProjectCardInner({
           </p>
         )}
 
+        {getTranscriptionOptionsForRoster &&
+          onSavePerFileTranscription &&
+          (project.status === 'queued_prepare' ||
+            project.status === 'preparing' ||
+            project.status === 'awaiting_transcript') && (
+            <ProjectSpeakerRosterEditor
+              projectId={project.id}
+              pendingOptions={project.pendingAutoTranscriptionOptions}
+              getBaselineOptions={getTranscriptionOptionsForRoster}
+              onSave={(opts) => onSavePerFileTranscription(project.id, opts)}
+            />
+          )}
+
         {project.status === 'error' &&
           project.fileUrl &&
           project.mediaMetadata?.editKey &&
@@ -404,8 +424,9 @@ function LibraryProjectCardInner({
               Transcribe with current settings
             </Button>
             <p className="mt-1.5 text-[11px] text-muted-foreground">
-              Adjust options in <span className="font-medium text-foreground">Transcription Settings</span> above
-              first if needed.
+              Uses <span className="font-medium text-foreground">People in this video</span> on this card if you saved
+              one; otherwise the library <span className="font-medium text-foreground">Transcription Settings</span>{' '}
+              above.
             </p>
           </div>
         )}

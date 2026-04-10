@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import {
   appendUniqueKnownSpeakerCsv,
   normalizeTranscriptionOptions,
+  removeFromKnownSpeakersCsv,
+  togglePresetInKnownSpeakersCsv,
   validateTranscriptionOptions,
 } from './transcription-options'
 
@@ -24,9 +26,15 @@ test('normalizeTranscriptionOptions drops speaker-specific tuning when diarizati
 })
 
 test('appendUniqueKnownSpeakerCsv appends and dedupes case-insensitively', () => {
-  assert.equal(appendUniqueKnownSpeakerCsv('', 'Debra'), 'Debra')
-  assert.equal(appendUniqueKnownSpeakerCsv('Debra', 'Scott'), 'Debra, Scott')
-  assert.equal(appendUniqueKnownSpeakerCsv('Debra, Scott', 'debra'), 'Debra, Scott')
+  assert.equal(appendUniqueKnownSpeakerCsv('', 'Jessica Clark'), 'Jessica Clark')
+  assert.equal(appendUniqueKnownSpeakerCsv('Jessica Clark', 'Scott Lepman'), 'Jessica Clark, Scott Lepman')
+  assert.equal(appendUniqueKnownSpeakerCsv('Jessica Clark, Scott Lepman', 'jessica clark'), 'Jessica Clark, Scott Lepman')
+})
+
+test('removeFromKnownSpeakersCsv and togglePresetInKnownSpeakersCsv', () => {
+  assert.equal(removeFromKnownSpeakersCsv('A, B, C', 'b'), 'A, C')
+  assert.equal(togglePresetInKnownSpeakersCsv('', 'Tonia', true), 'Tonia')
+  assert.equal(togglePresetInKnownSpeakersCsv('Tonia', 'Tonia', false), '')
 })
 
 test('validateTranscriptionOptions rejects an invalid speaker range', () => {
