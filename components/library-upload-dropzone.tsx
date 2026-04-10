@@ -69,11 +69,12 @@ export function LibraryUploadDropzone({
 
         <p className="hidden max-w-md text-pretty text-sm leading-relaxed text-muted-foreground md:block">
           On a phone or tablet, you can usually pick several videos at once: look for &ldquo;Select&rdquo; or checkboxes,
-          then tap each video, then confirm. For large files, keep this tab in the foreground until the transfer finishes;
-          plug in if you can. iOS Low Power Mode may slow uploads.
+          then tap each video, then confirm. A banner appears while uploads run explaining whether we can keep your
+          screen awake; plug in for long batches. iOS Low Power Mode may still slow transfers.
         </p>
         <p className="max-w-md text-pretty text-xs leading-relaxed text-muted-foreground md:hidden">
-          You can select multiple videos in the picker. Keep this tab open while uploading large files.
+          You can select multiple videos in the picker. While uploading, stay on this page when you can—a banner shows
+          wake-lock status.
         </p>
 
         <p className="text-sm leading-6 text-muted-foreground">

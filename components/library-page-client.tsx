@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { Search, Filter } from 'lucide-react'
 import { LibraryHeader, WorkspaceList } from '@/components/library-header'
+import { LibraryUploadWakeBanner } from '@/components/library/library-upload-wake-banner'
 import { LibraryUploadDropzone } from '@/components/library-upload-dropzone'
 import {
   TranscriptionPresetControls,
@@ -819,6 +820,11 @@ export function LibraryPageClient({
 
   const hasFilter = debouncedSearch.length > 0 || statusFilter !== 'all'
 
+  const libraryActiveUploadCount = useMemo(
+    () => tree?.media.filter((m) => m.status === 'uploading').length ?? 0,
+    [tree],
+  )
+
   const openNewFolder = useCallback(() => {
     setNewFolderParentId(null)
     setNewFolderName('')
@@ -886,7 +892,8 @@ export function LibraryPageClient({
                 <LibraryHero />
               </div>
 
-              <div className="order-2 md:order-none">
+              <div className="order-2 md:order-none flex flex-col">
+                <LibraryUploadWakeBanner uploadCount={libraryActiveUploadCount} />
                 <LibraryUploadDropzone
                   disabled={viewerLocked}
                   fileInputId={LIBRARY_VIDEO_FILE_INPUT_ID}
