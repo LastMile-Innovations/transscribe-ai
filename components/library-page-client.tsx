@@ -8,6 +8,10 @@ import { toast } from 'sonner'
 import { Search, Filter } from 'lucide-react'
 import { LibraryHeader, WorkspaceList } from '@/components/library-header'
 import { LibraryUploadDropzone } from '@/components/library-upload-dropzone'
+import {
+  TranscriptionPresetControls,
+  type SavedTranscriptionPresetRow,
+} from '@/components/transcription-preset-controls'
 import { TranscriptionSettingsPanel } from '@/components/transcription-settings-panel'
 import { LibraryEmptyState } from '@/components/library/library-empty-state'
 import { LibraryFolderSidebar } from '@/components/library/library-folder-sidebar'
@@ -41,6 +45,12 @@ import {
   DEFAULT_TRANSCRIPTION_PROMPT,
   normalizeTranscriptionOptions,
 } from '@/lib/transcription-options'
+import {
+  getBuiltinTemplateById,
+  optionsFromBuiltinTemplate,
+  resolveTranscriptionPresetSelection,
+  transcriptionOptionsToFormState,
+} from '@/lib/transcription-prompt-templates'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
 import type {
   BrowseFilter,
@@ -48,6 +58,7 @@ import type {
   WorkspaceProject,
   WorkspaceTreeData,
 } from '@/lib/types'
+import type { TranscriptionRequestOptions } from '@/lib/transcription-options'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -105,6 +116,14 @@ export function LibraryPageClient({
   const [knownSpeakers, setKnownSpeakers] = useState<string>('')
   const [redactPii, setRedactPii] = useState(false)
   const [autoTranscribe, setAutoTranscribe] = useState(false)
+
+  const [transcriptionPresetsPersonal, setTranscriptionPresetsPersonal] = useState<
+    SavedTranscriptionPresetRow[]
+  >([])
+  const [transcriptionPresetsWorkspace, setTranscriptionPresetsWorkspace] = useState<
+    SavedTranscriptionPresetRow[]
+  >([])
+  const [selectedTranscriptionPresetKey, setSelectedTranscriptionPresetKey] = useState('builtin:recommended')
 
   const refreshServerData = useCallback(() => {
     router.refresh()
@@ -183,6 +202,149 @@ export function LibraryPageClient({
       speechModel,
       temperature,
     ],
+  )
+
+  const applyFormFromNormalizedOptions = useCallback((o: TranscriptionRequestOptions) => {
+    const s = transcriptionOptionsToFormState(o)
+    setSpeechModel(s.speechModel)
+    setSpeakerLabels(s.speakerLabels)
+    setLanguageDetection(s.languageDetection)
+    setTemperature(s.temperature)
+    setKeyterms(s.keyterms)
+    setCustomPrompt(s.customPrompt)
+    setSpeakersExpected(s.speakersExpected)
+    setMinSpeakers(s.minSpeakers)
+    setMaxSpeakers(s.maxSpeakers)
+    setKnownSpeakers(s.knownSpeakers)
+    setRedactPii(s.redactPii)
+  }, [])
+
+  const handleSelectTranscriptionPresetKey = useCallback(
+    (key: string) => {
+      if (key === 'custom') {
+        setSelectedTranscriptionPresetKey('custom')
+        return
+      }
+      const next = resolveTranscriptionPresetSelection(
+        key,
+        transcriptionPresetsPersonal,
+        transcriptionPresetsWorkspace,
+      )
+      if (next) applyFormFromNormalizedOptions(next)
+      setSelectedTranscriptionPresetKey(key)
+    },
+    [applyFormFromNormalizedOptions, transcriptionPresetsPersonal, transcriptionPresetsWorkspace],
+  )
+
+  const markTranscriptionCustom = useCallback(() => {
+    setSelectedTranscriptionPresetKey('custom')
+  }, [])
+
+  useEffect(() => {
+    if (!wpId || !user?.id) {
+      setTranscriptionPresetsPersonal([])
+      setTranscriptionPresetsWorkspace([])
+      return
+    }
+    let cancelled = false
+    void authedFetch(`/api/workspace-projects/${wpId}/transcription-presets`)
+      .then(async (r) => {
+        if (!r.ok) throw new Error('Failed to load presets')
+        return r.json() as Promise<{
+          personal: SavedTranscriptionPresetRow[]
+          workspace: SavedTranscriptionPresetRow[]
+        }>
+      })
+      .then((data) => {
+        if (cancelled) return
+        setTranscriptionPresetsPersonal(data.personal ?? [])
+        setTranscriptionPresetsWorkspace(data.workspace ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) toast.error('Could not load transcription presets.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [wpId, user?.id, authedFetch])
+
+  useEffect(() => {
+    if (!wpId) return
+    const rec = getBuiltinTemplateById('builtin:recommended')
+    if (rec) {
+      applyFormFromNormalizedOptions(optionsFromBuiltinTemplate(rec))
+    }
+    setSelectedTranscriptionPresetKey('builtin:recommended')
+  }, [wpId, applyFormFromNormalizedOptions])
+
+  const saveTranscriptionPreset = useCallback(
+    async (name: string, scope: 'personal' | 'workspace') => {
+      if (!wpId) return
+      const options = currentTranscriptionOptions()
+      const res = await authedFetch(`/api/workspace-projects/${wpId}/transcription-presets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, scope, options }),
+      })
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string }
+        toast.error(typeof j.error === 'string' ? j.error : 'Could not save preset.')
+        return
+      }
+      const row = (await res.json()) as SavedTranscriptionPresetRow
+      if (scope === 'personal') {
+        setTranscriptionPresetsPersonal((prev) =>
+          [...prev, row].sort((a, b) => a.name.localeCompare(b.name)),
+        )
+        setSelectedTranscriptionPresetKey(`personal:${row.id}`)
+      } else {
+        setTranscriptionPresetsWorkspace((prev) =>
+          [...prev, row].sort((a, b) => a.name.localeCompare(b.name)),
+        )
+        setSelectedTranscriptionPresetKey(`workspace:${row.id}`)
+      }
+      toast.success('Preset saved.')
+    },
+    [wpId, authedFetch, currentTranscriptionOptions],
+  )
+
+  const deleteTranscriptionPreset = useCallback(
+    async (preset: SavedTranscriptionPresetRow) => {
+      if (!wpId) return
+      const prefix = preset.scope === 'personal' ? `personal:${preset.id}` : `workspace:${preset.id}`
+      const wasSelected = selectedTranscriptionPresetKey === prefix
+      const res = await authedFetch(
+        `/api/workspace-projects/${wpId}/transcription-presets/${preset.id}`,
+        { method: 'DELETE' },
+      )
+      if (!res.ok) {
+        toast.error('Could not delete preset.')
+        return
+      }
+      if (preset.scope === 'personal') {
+        setTranscriptionPresetsPersonal((prev) => prev.filter((p) => p.id !== preset.id))
+      } else {
+        setTranscriptionPresetsWorkspace((prev) => prev.filter((p) => p.id !== preset.id))
+      }
+      if (wasSelected) {
+        const rec = getBuiltinTemplateById('builtin:recommended')
+        if (rec) {
+          applyFormFromNormalizedOptions(optionsFromBuiltinTemplate(rec))
+        }
+        setSelectedTranscriptionPresetKey('builtin:recommended')
+      }
+      toast.success('Preset deleted.')
+    },
+    [wpId, authedFetch, applyFormFromNormalizedOptions, selectedTranscriptionPresetKey],
+  )
+
+  const canDeleteSavedTranscriptionPreset = useCallback(
+    (p: SavedTranscriptionPresetRow) => {
+      if (!user?.id) return false
+      if (p.scope === 'personal') return p.createdByUserId === user.id
+      return p.createdByUserId === user.id || isWorkspaceOwner
+    },
+    [user?.id, isWorkspaceOwner],
   )
 
   const runHandleFiles = useCallback(
@@ -706,7 +868,19 @@ export function LibraryPageClient({
                 />
               </div>
 
-              <div className="order-5 md:order-none">
+              <div className="order-5 md:order-none flex flex-col gap-4">
+                {wpId && user?.id ? (
+                  <TranscriptionPresetControls
+                    selectedKey={selectedTranscriptionPresetKey}
+                    onSelectKey={handleSelectTranscriptionPresetKey}
+                    personalPresets={transcriptionPresetsPersonal}
+                    workspacePresets={transcriptionPresetsWorkspace}
+                    canSave={!viewerLocked}
+                    canDeleteSavedPreset={canDeleteSavedTranscriptionPreset}
+                    onSave={saveTranscriptionPreset}
+                    onDelete={deleteTranscriptionPreset}
+                  />
+                ) : null}
                 <TranscriptionSettingsPanel
                   speechModel={speechModel}
                   setSpeechModel={setSpeechModel}
@@ -732,18 +906,25 @@ export function LibraryPageClient({
                   setRedactPii={setRedactPii}
                   autoTranscribe={autoTranscribe}
                   setAutoTranscribe={setAutoTranscribe}
+                  onMarkCustom={markTranscriptionCustom}
                   onResetRecommended={() => {
-                    setSpeechModel(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
-                    setSpeakerLabels(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
-                    setLanguageDetection(DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection)
-                    setTemperature([DEFAULT_TRANSCRIPTION_OPTIONS.temperature])
-                    setKeyterms(DEFAULT_TRANSCRIPTION_OPTIONS.keyterms ?? '')
-                    setCustomPrompt(DEFAULT_TRANSCRIPTION_PROMPT)
-                    setSpeakersExpected('')
-                    setMinSpeakers('')
-                    setMaxSpeakers('')
-                    setKnownSpeakers(DEFAULT_TRANSCRIPTION_OPTIONS.knownSpeakers ?? '')
-                    setRedactPii(DEFAULT_TRANSCRIPTION_OPTIONS.redactPii ?? false)
+                    const rec = getBuiltinTemplateById('builtin:recommended')
+                    if (rec) {
+                      applyFormFromNormalizedOptions(optionsFromBuiltinTemplate(rec))
+                    } else {
+                      setSpeechModel(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
+                      setSpeakerLabels(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
+                      setLanguageDetection(DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection)
+                      setTemperature([DEFAULT_TRANSCRIPTION_OPTIONS.temperature])
+                      setKeyterms(DEFAULT_TRANSCRIPTION_OPTIONS.keyterms ?? '')
+                      setCustomPrompt(DEFAULT_TRANSCRIPTION_PROMPT)
+                      setSpeakersExpected('')
+                      setMinSpeakers('')
+                      setMaxSpeakers('')
+                      setKnownSpeakers(DEFAULT_TRANSCRIPTION_OPTIONS.knownSpeakers ?? '')
+                      setRedactPii(DEFAULT_TRANSCRIPTION_OPTIONS.redactPii ?? false)
+                    }
+                    setSelectedTranscriptionPresetKey('builtin:recommended')
                   }}
                 />
               </div>

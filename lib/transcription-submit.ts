@@ -24,6 +24,13 @@ import {
   type TranscriptionRequestOptions,
 } from '@/lib/transcription-options'
 
+/**
+ * Pre-recorded transcription: submit then poll (and/or webhook). `speech_models` is always sent.
+ * @see https://www.assemblyai.com/docs/speech-to-text/pre-recorded-audio
+ * @see https://www.assemblyai.com/docs/speech-to-text/pre-recorded-audio/webhooks
+ * @see https://www.assemblyai.com/docs/pre-recorded-audio/universal-3-pro
+ * @see https://www.assemblyai.com/docs/pre-recorded-audio/prompting
+ */
 const apiKey = process.env.ASSEMBLYAI_API_KEY || ''
 const baseUrl = process.env.ASSEMBLYAI_BASE_URL || undefined
 const client = new AssemblyAI({ apiKey, baseUrl })
@@ -386,6 +393,9 @@ export async function submitProjectTranscription(input: {
       ? normalizedOptions.keyterms.split(',').map((t) => t.trim()).filter((t) => t !== '')
       : []
 
+    // Universal-3 Pro: `prompt` and `keyterms_prompt` are mutually exclusive on the API.
+    // When both are provided in the UI, we follow AssemblyAI’s suggested workaround: a single
+    // `prompt` with a trailing `Context: …` line (see async Prompting guide).
     if (normalizedOptions.prompt && normalizedOptions.prompt !== '') {
       let finalPrompt = normalizedOptions.prompt
       if (keytermsArray.length > 0) {

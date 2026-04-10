@@ -59,8 +59,22 @@ import { Switch } from '@/components/ui/switch'
 import { useAuthedFetch } from '@/lib/authed-fetch'
 import { useApp } from '@/lib/app-context'
 import { preferredDurationMs, resolutionLabel } from '@/lib/media-metadata'
+import {
+  TranscriptionPresetPicker,
+  type SavedTranscriptionPresetRow,
+} from '@/components/transcription-preset-controls'
+import { persistEditorRerunTranscriptionOptions, loadEditorRerunTranscriptionOptions } from '@/lib/editor-rerun-transcription-storage'
 import { runTranscriptionFlow } from '@/lib/transcription-client'
-import { DEFAULT_TRANSCRIPTION_OPTIONS } from '@/lib/transcription-options'
+import {
+  DEFAULT_TRANSCRIPTION_OPTIONS,
+  normalizeTranscriptionOptions,
+  type TranscriptionRequestOptions,
+} from '@/lib/transcription-options'
+import {
+  getBuiltinTemplateById,
+  optionsFromBuiltinTemplate,
+  resolveTranscriptionPresetSelection,
+} from '@/lib/transcription-prompt-templates'
 import type { TranscriptSummary, VideoProject } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -253,11 +267,12 @@ export function EditorTopBarActions({
   const [newLabel, setNewLabel] = useState('')
   const [startingTranscribe, setStartingTranscribe] = useState(false)
   const [mediaInfoOpen, setMediaInfoOpen] = useState(false)
-  const [rerunSpeechModel, setRerunSpeechModel] = useState(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
-  const [rerunSpeakerLabels, setRerunSpeakerLabels] = useState(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
-  const [rerunLanguageDetection, setRerunLanguageDetection] = useState(
-    DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection,
+  const [rerunOptions, setRerunOptions] = useState<TranscriptionRequestOptions>(() =>
+    normalizeTranscriptionOptions({}),
   )
+  const [selectedRerunPresetKey, setSelectedRerunPresetKey] = useState('custom')
+  const [editorPresetsPersonal, setEditorPresetsPersonal] = useState<SavedTranscriptionPresetRow[]>([])
+  const [editorPresetsWorkspace, setEditorPresetsWorkspace] = useState<SavedTranscriptionPresetRow[]>([])
 
   const project = state.projects.find((entry) => entry.id === initialProject.id) ?? initialProject
   const mediaId = project.id
@@ -269,13 +284,55 @@ export function EditorTopBarActions({
   }, [initialTranscriptList])
 
   useEffect(() => {
-    if (!newDialogOpen) {
-      setNewLabel('')
-      setRerunSpeechModel(DEFAULT_TRANSCRIPTION_OPTIONS.speechModel)
-      setRerunSpeakerLabels(DEFAULT_TRANSCRIPTION_OPTIONS.speakerLabels)
-      setRerunLanguageDetection(DEFAULT_TRANSCRIPTION_OPTIONS.languageDetection)
+    if (!newDialogOpen) return
+    setNewLabel('')
+    setRerunOptions(loadEditorRerunTranscriptionOptions())
+    setSelectedRerunPresetKey('custom')
+    const wp = project.workspaceProjectId
+    if (!wp) {
+      setEditorPresetsPersonal([])
+      setEditorPresetsWorkspace([])
+      return
     }
-  }, [newDialogOpen])
+    let cancelled = false
+    void authedFetch(`/api/workspace-projects/${wp}/transcription-presets`)
+      .then(async (r) => {
+        if (!r.ok) throw new Error('presets')
+        return r.json() as Promise<{
+          personal: SavedTranscriptionPresetRow[]
+          workspace: SavedTranscriptionPresetRow[]
+        }>
+      })
+      .then((data) => {
+        if (cancelled) return
+        setEditorPresetsPersonal(data.personal ?? [])
+        setEditorPresetsWorkspace(data.workspace ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEditorPresetsPersonal([])
+          setEditorPresetsWorkspace([])
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [newDialogOpen, project.workspaceProjectId, authedFetch])
+
+  const markRerunCustom = useCallback(() => setSelectedRerunPresetKey('custom'), [])
+
+  const handleEditorPresetKey = useCallback(
+    (key: string) => {
+      if (key === 'custom') {
+        setSelectedRerunPresetKey('custom')
+        return
+      }
+      const next = resolveTranscriptionPresetSelection(key, editorPresetsPersonal, editorPresetsWorkspace)
+      if (next) setRerunOptions(next)
+      setSelectedRerunPresetKey(key)
+    },
+    [editorPresetsPersonal, editorPresetsWorkspace],
+  )
 
   const switchTranscript = useCallback(
     async (transcriptId: string) => {
@@ -288,15 +345,20 @@ export function EditorTopBarActions({
 
   const applyRerunPreset = (preset: 'best' | 'fast') => {
     if (preset === 'fast') {
-      setRerunSpeechModel('fast')
-      setRerunSpeakerLabels(false)
-      setRerunLanguageDetection(true)
+      setRerunOptions(
+        normalizeTranscriptionOptions({
+          ...DEFAULT_TRANSCRIPTION_OPTIONS,
+          speechModel: 'fast',
+          speakerLabels: false,
+          languageDetection: true,
+        }),
+      )
+      setSelectedRerunPresetKey('custom')
       return
     }
-
-    setRerunSpeechModel('best')
-    setRerunSpeakerLabels(true)
-    setRerunLanguageDetection(true)
+    const rec = getBuiltinTemplateById('builtin:recommended')
+    setRerunOptions(rec ? optionsFromBuiltinTemplate(rec) : normalizeTranscriptionOptions({}))
+    setSelectedRerunPresetKey('builtin:recommended')
   }
 
   const startNewTranscription = useCallback(async () => {
@@ -314,19 +376,18 @@ export function EditorTopBarActions({
     }
     setStartingTranscribe(true)
     try {
+      const flowOptions = normalizeTranscriptionOptions({
+        ...rerunOptions,
+        transcriptLabel: newLabel.trim() || undefined,
+      })
       const result = await runTranscriptionFlow({
         projectId: mediaId,
         fetchImpl: authedFetch,
-        options: {
-          speechModel: rerunSpeechModel,
-          speakerLabels: rerunSpeakerLabels,
-          languageDetection: rerunLanguageDetection,
-          temperature: DEFAULT_TRANSCRIPTION_OPTIONS.temperature,
-          transcriptLabel: newLabel.trim() || undefined,
-        },
+        options: flowOptions,
       })
 
       if (result.ok) {
+        persistEditorRerunTranscriptionOptions(rerunOptions)
         setNewDialogOpen(false)
         setNewLabel('')
         setSwitchingTranscriptId(result.transcriptId)
@@ -355,9 +416,7 @@ export function EditorTopBarActions({
     newLabel,
     project.mediaMetadata?.editKey,
     project.status,
-    rerunLanguageDetection,
-    rerunSpeakerLabels,
-    rerunSpeechModel,
+    rerunOptions,
     router,
   ])
 
@@ -741,7 +800,7 @@ export function EditorTopBarActions({
                 onClick={() => applyRerunPreset('best')}
                 className={cn(
                   'rounded-lg border p-3 text-left transition-colors',
-                  rerunSpeechModel === 'best' && rerunSpeakerLabels
+                  rerunOptions.speechModel === 'best' && rerunOptions.speakerLabels
                     ? 'border-brand bg-brand/5'
                     : 'border-border hover:border-brand/40',
                 )}
@@ -756,7 +815,7 @@ export function EditorTopBarActions({
                 onClick={() => applyRerunPreset('fast')}
                 className={cn(
                   'rounded-lg border p-3 text-left transition-colors',
-                  rerunSpeechModel === 'fast' && !rerunSpeakerLabels
+                  rerunOptions.speechModel === 'fast' && !rerunOptions.speakerLabels
                     ? 'border-brand bg-brand/5'
                     : 'border-border hover:border-brand/40',
                 )}
@@ -773,15 +832,36 @@ export function EditorTopBarActions({
               onChange={(e) => setNewLabel(e.target.value)}
               placeholder="e.g. Re-run, Spanish"
             />
+            <div className="space-y-2">
+              <Label>Preset</Label>
+              <p className="text-xs text-muted-foreground">
+                Same templates and saved presets as the Library. Adjust toggles below to switch to Custom.
+              </p>
+              <TranscriptionPresetPicker
+                selectedKey={selectedRerunPresetKey}
+                onSelectKey={handleEditorPresetKey}
+                personalPresets={editorPresetsPersonal}
+                workspacePresets={editorPresetsWorkspace}
+              />
+            </div>
             <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              {rerunSpeechModel === 'best'
+              {rerunOptions.speechModel === 'best'
                 ? 'Using the highest accuracy model.'
                 : 'Using the fast model for quicker turnaround.'}{' '}
-              {rerunSpeakerLabels ? 'Speaker labels are on.' : 'Speaker labels are off.'}
+              {rerunOptions.speakerLabels ? 'Speaker labels are on.' : 'Speaker labels are off.'}
+              {rerunOptions.prompt?.trim()
+                ? ' Custom prompt will be sent to AssemblyAI.'
+                : ' No custom prompt (API default).'}
             </div>
             <div className="space-y-2">
               <Label>Speech model</Label>
-              <Select value={rerunSpeechModel} onValueChange={(value: 'best' | 'fast') => setRerunSpeechModel(value)}>
+              <Select
+                value={rerunOptions.speechModel}
+                onValueChange={(value: 'best' | 'fast') => {
+                  markRerunCustom()
+                  setRerunOptions((o) => normalizeTranscriptionOptions({ ...o, speechModel: value }))
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -796,14 +876,26 @@ export function EditorTopBarActions({
                 <Label>Speaker labels</Label>
                 <p className="text-xs text-muted-foreground">Identify who is speaking for easier editing.</p>
               </div>
-              <Switch checked={rerunSpeakerLabels} onCheckedChange={setRerunSpeakerLabels} />
+              <Switch
+                checked={rerunOptions.speakerLabels}
+                onCheckedChange={(v) => {
+                  markRerunCustom()
+                  setRerunOptions((o) => normalizeTranscriptionOptions({ ...o, speakerLabels: v }))
+                }}
+              />
             </div>
             <div className="flex items-center justify-between gap-4">
               <div className="flex flex-col gap-1">
                 <Label>Language detection</Label>
                 <p className="text-xs text-muted-foreground">Auto-detect the primary spoken language.</p>
               </div>
-              <Switch checked={rerunLanguageDetection} onCheckedChange={setRerunLanguageDetection} />
+              <Switch
+                checked={rerunOptions.languageDetection}
+                onCheckedChange={(v) => {
+                  markRerunCustom()
+                  setRerunOptions((o) => normalizeTranscriptionOptions({ ...o, languageDetection: v }))
+                }}
+              />
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">

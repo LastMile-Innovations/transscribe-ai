@@ -48,6 +48,7 @@ export function TranscriptionSettingsPanel({
   autoTranscribe,
   setAutoTranscribe,
   onResetRecommended,
+  onMarkCustom,
 }: {
   speechModel: string
   setSpeechModel: (value: string) => void
@@ -74,7 +75,11 @@ export function TranscriptionSettingsPanel({
   autoTranscribe: boolean
   setAutoTranscribe: (value: boolean) => void
   onResetRecommended: () => void
+  /** When the user edits any control, clear the preset picker to Custom. */
+  onMarkCustom?: () => void
 }) {
+  const mark = onMarkCustom ?? (() => {})
+
   return (
     <div className="mb-0">
       <Accordion type="single" collapsible className="library-panel-accordion w-full px-3 md:px-6">
@@ -111,7 +116,13 @@ export function TranscriptionSettingsPanel({
               <div className="flex flex-col gap-6">
                 <div className="flex flex-col gap-3">
                   <Label>Speech Model</Label>
-                  <Select value={speechModel} onValueChange={setSpeechModel}>
+                  <Select
+                    value={speechModel}
+                    onValueChange={(v) => {
+                      mark()
+                      setSpeechModel(v)
+                    }}
+                  >
                     <SelectTrigger className="border-white/60 bg-background/80">
                       <SelectValue />
                     </SelectTrigger>
@@ -132,7 +143,13 @@ export function TranscriptionSettingsPanel({
                       Automatically identify who is speaking.
                     </p>
                   </div>
-                  <Switch checked={speakerLabels} onCheckedChange={setSpeakerLabels} />
+                  <Switch
+                    checked={speakerLabels}
+                    onCheckedChange={(v) => {
+                      mark()
+                      setSpeakerLabels(v)
+                    }}
+                  />
                 </div>
 
                 {speakerLabels && (
@@ -154,6 +171,7 @@ export function TranscriptionSettingsPanel({
                           placeholder="e.g. 2"
                           value={speakersExpected}
                           onChange={(e) => {
+                            mark()
                             setSpeakersExpected(e.target.value)
                             if (e.target.value) {
                               setMinSpeakers('')
@@ -171,6 +189,7 @@ export function TranscriptionSettingsPanel({
                             placeholder="Min"
                             value={minSpeakers}
                             onChange={(e) => {
+                              mark()
                               setMinSpeakers(e.target.value)
                               if (e.target.value) setSpeakersExpected('')
                             }}
@@ -181,6 +200,7 @@ export function TranscriptionSettingsPanel({
                             placeholder="Max"
                             value={maxSpeakers}
                             onChange={(e) => {
+                              mark()
                               setMaxSpeakers(e.target.value)
                               if (e.target.value) setSpeakersExpected('')
                             }}
@@ -195,7 +215,10 @@ export function TranscriptionSettingsPanel({
                       <Input
                         placeholder="John Doe, Jane Smith..."
                         value={knownSpeakers}
-                        onChange={(e) => setKnownSpeakers(e.target.value)}
+                        onChange={(e) => {
+                          mark()
+                          setKnownSpeakers(e.target.value)
+                        }}
                         className="h-8 text-xs"
                       />
                       <p className="text-[10px] text-muted-foreground leading-tight">
@@ -212,7 +235,13 @@ export function TranscriptionSettingsPanel({
                       Auto-detect the primary language spoken.
                     </p>
                   </div>
-                  <Switch checked={languageDetection} onCheckedChange={setLanguageDetection} />
+                  <Switch
+                    checked={languageDetection}
+                    onCheckedChange={(v) => {
+                      mark()
+                      setLanguageDetection(v)
+                    }}
+                  />
                 </div>
 
                 <div className="flex flex-col gap-4 pt-2">
@@ -220,7 +249,15 @@ export function TranscriptionSettingsPanel({
                     <Label>Temperature</Label>
                     <span className="font-mono text-xs text-brand">{temperature[0]}</span>
                   </div>
-                  <Slider value={temperature} onValueChange={setTemperature} max={1} step={0.1} />
+                  <Slider
+                    value={temperature}
+                    onValueChange={(v) => {
+                      mark()
+                      setTemperature(v)
+                    }}
+                    max={1}
+                    step={0.1}
+                  />
                   <p className="text-xs text-muted-foreground">
                     Lower values maximize determinism, higher explores more.
                   </p>
@@ -232,7 +269,10 @@ export function TranscriptionSettingsPanel({
                   <Label>Boosted Vocabulary (Keyterms)</Label>
                   <Textarea
                     value={keyterms}
-                    onChange={(e) => setKeyterms(e.target.value)}
+                    onChange={(e) => {
+                      mark()
+                      setKeyterms(e.target.value)
+                    }}
                     className="min-h-[80px] resize-none border-dashed border-brand/25 bg-background/75 font-mono text-[11px]"
                     placeholder="Anktiva, Glicoside, Ramipril..."
                   />
@@ -250,7 +290,10 @@ export function TranscriptionSettingsPanel({
                   </div>
                   <Textarea
                     value={customPrompt}
-                    onChange={(e) => setCustomPrompt(e.target.value)}
+                    onChange={(e) => {
+                      mark()
+                      setCustomPrompt(e.target.value)
+                    }}
                     className="min-h-[260px] resize-none border-dashed border-brand/25 bg-background/75 font-mono text-[11px] leading-relaxed"
                     placeholder="Enter a custom prompt here..."
                   />
@@ -273,7 +316,13 @@ export function TranscriptionSettingsPanel({
                         Identify and mask person names, SSNs, phone numbers, and addresses.
                       </p>
                     </div>
-                    <Switch checked={redactPii} onCheckedChange={setRedactPii} />
+                    <Switch
+                      checked={redactPii}
+                      onCheckedChange={(v) => {
+                        mark()
+                        setRedactPii(v)
+                      }}
+                    />
                   </div>
                 </div>
 
@@ -286,7 +335,13 @@ export function TranscriptionSettingsPanel({
                         finishes uploading.
                       </p>
                     </div>
-                    <Switch checked={autoTranscribe} onCheckedChange={setAutoTranscribe} />
+                    <Switch
+                      checked={autoTranscribe}
+                      onCheckedChange={(v) => {
+                        mark()
+                        setAutoTranscribe(v)
+                      }}
+                    />
                   </div>
                 </div>
               </div>

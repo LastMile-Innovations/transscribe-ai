@@ -15,8 +15,8 @@ export type TranscriptionRequestOptions = {
   transcriptLabel?: string
 }
 
-export const DEFAULT_TRANSCRIPTION_PROMPT =
-  'Mandatory: Transcribe legal proceedings and evidentiary files with precise terminology intact. Preserve all profanity exactly as spoken. Required: Preserve linguistic speech patterns including disfluencies, filler words, hesitations, repetitions, stutters, false starts, and colloquialisms. Strict requirement: Always transcribe speech exactly as heard. If uncertain or audio is unclear, mark as [unclear] instead of guessing. Non-negotiable: Distinguish between speakers through clear role-based attribution. Label participants by role when identifiable (judge, counsel, witness). Mark overlapping speech as [CROSSTALK].'
+/** Empty = omit `prompt` on the API so Universal-3 Pro uses AssemblyAI’s built-in default. */
+export const DEFAULT_TRANSCRIPTION_PROMPT = ''
 
 export const DEFAULT_TRANSCRIPTION_OPTIONS: TranscriptionRequestOptions = {
   speechModel: 'best',

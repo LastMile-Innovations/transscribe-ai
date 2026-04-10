@@ -39,9 +39,12 @@ export const overlayFontWeightEnum = pgEnum('overlay_font_weight', ['normal', 'b
 
 export const workspaceMemberRoleEnum = pgEnum('workspace_member_role', ['owner', 'editor', 'viewer'])
 
+export const transcriptionPresetScopeEnum = pgEnum('transcription_preset_scope', ['personal', 'workspace'])
+
 export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number]
 export type OverlayFontWeight = (typeof overlayFontWeightEnum.enumValues)[number]
 export type WorkspaceMemberRole = (typeof workspaceMemberRoleEnum.enumValues)[number]
+export type TranscriptionPresetScope = (typeof transcriptionPresetScopeEnum.enumValues)[number]
 
 export const workspaceProjects = pgTable('workspace_projects', {
   id: text('id').primaryKey(),
@@ -62,6 +65,26 @@ export const workspaceMembers = pgTable(
   (t) => ({
     pk: primaryKey({ columns: [t.workspaceProjectId, t.userId] }),
     userIdIdx: index('workspace_members_user_id_idx').on(t.userId),
+  }),
+)
+
+export const transcriptionPresets = pgTable(
+  'transcription_presets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    workspaceProjectId: text('workspace_project_id')
+      .notNull()
+      .references(() => workspaceProjects.id, { onDelete: 'cascade' }),
+    scope: transcriptionPresetScopeEnum('scope').notNull(),
+    name: text('name').notNull(),
+    options: jsonb('options').$type<TranscriptionRequestOptions>().notNull(),
+    createdByUserId: text('created_by_user_id').notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (t) => ({
+    workspaceUserIdx: index('transcription_presets_workspace_user_idx').on(t.workspaceProjectId, t.createdByUserId),
+    workspaceScopeIdx: index('transcription_presets_workspace_scope_idx').on(t.workspaceProjectId, t.scope),
   }),
 )
 
@@ -204,6 +227,14 @@ export const workspaceProjectsRelations = relations(workspaceProjects, ({ many }
   folders: many(folders),
   media: many(projects),
   members: many(workspaceMembers),
+  transcriptionPresets: many(transcriptionPresets),
+}))
+
+export const transcriptionPresetsRelations = relations(transcriptionPresets, ({ one }) => ({
+  workspace: one(workspaceProjects, {
+    fields: [transcriptionPresets.workspaceProjectId],
+    references: [workspaceProjects.id],
+  }),
 }))
 
 export const foldersRelations = relations(folders, ({ one, many }) => ({
@@ -269,3 +300,5 @@ export type TranscriptSegmentRow = typeof transcriptSegments.$inferSelect
 export type TranscriptSegmentInsert = typeof transcriptSegments.$inferInsert
 export type TextOverlayRow = typeof textOverlays.$inferSelect
 export type TextOverlayInsert = typeof textOverlays.$inferInsert
+export type TranscriptionPresetRow = typeof transcriptionPresets.$inferSelect
+export type TranscriptionPresetInsert = typeof transcriptionPresets.$inferInsert

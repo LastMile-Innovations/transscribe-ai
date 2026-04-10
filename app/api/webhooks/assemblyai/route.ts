@@ -4,6 +4,7 @@ import { syncTranscriptFromWebhook } from '@/lib/assemblyai-transcript-sync'
 /**
  * AssemblyAI pre-recorded transcription webhooks.
  *
+ * @see https://www.assemblyai.com/docs/speech-to-text/pre-recorded-audio
  * @see https://www.assemblyai.com/docs/speech-to-text/pre-recorded-audio/webhooks
  *
  * Delivery: POST JSON `{ transcript_id, status }` where `status` is `completed` or `error`.
