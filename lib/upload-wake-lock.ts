@@ -20,6 +20,20 @@ export type UploadWakeLockSnapshot = {
   sessions: number
 }
 
+/** Stable reference for SSR; useSyncExternalStore requires getServerSnapshot identity stability. */
+const SERVER_UPLOAD_WAKE_LOCK_SNAPSHOT: UploadWakeLockSnapshot = Object.freeze({
+  supported: false,
+  active: false,
+  sessions: 0,
+})
+
+/** Reuse the same object when values are unchanged so useSyncExternalStore does not loop (React #185). */
+let clientSnapshotCache: UploadWakeLockSnapshot = {
+  supported: false,
+  active: false,
+  sessions: 0,
+}
+
 export function subscribeUploadWakeLock(listener: () => void) {
   listeners.add(listener)
   return () => {
@@ -33,15 +47,21 @@ export function getUploadWakeLockSnapshot(): UploadWakeLockSnapshot {
     'wakeLock' in navigator &&
     typeof (navigator as Navigator & { wakeLock?: { request: (t: string) => Promise<WakeLockSentinel> } }).wakeLock
       ?.request === 'function'
-  return {
-    supported,
-    active: wakeLock !== null,
-    sessions: refCount,
+  const active = wakeLock !== null
+  const sessions = refCount
+  if (
+    clientSnapshotCache.supported === supported &&
+    clientSnapshotCache.active === active &&
+    clientSnapshotCache.sessions === sessions
+  ) {
+    return clientSnapshotCache
   }
+  clientSnapshotCache = { supported, active, sessions }
+  return clientSnapshotCache
 }
 
 export function getServerUploadWakeLockSnapshot(): UploadWakeLockSnapshot {
-  return { supported: false, active: false, sessions: 0 }
+  return SERVER_UPLOAD_WAKE_LOCK_SNAPSHOT
 }
 
 async function releaseScreenLock() {
