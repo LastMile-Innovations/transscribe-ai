@@ -5,12 +5,13 @@ import {
   projects,
   transcripts,
   type ProjectRow,
-  type ProjectStatus,
-  type TranscriptRow,
 } from '@/lib/db/schema'
 import { transcriptionProgressFromAssemblyStatus } from '@/lib/assemblyai-transcript-sync'
 import { buildEditObjectKey } from '@/lib/media-keys'
 import { projectHasPreparedEdit } from '@/lib/project-prepare'
+import {
+  activeTranscriptionReservationDisposition,
+} from '@/lib/transcription-reservation'
 import {
   getObjectBodyStream,
   objectUrlUnreachableFromAssemblyAi,
@@ -52,39 +53,6 @@ export type SubmitProjectTranscriptionResult = {
   normalizedOptions: TranscriptionRequestOptions
 }
 
-export const TRANSCRIPTION_START_STALE_AFTER_MS = 2 * 60 * 1000
-
-export function isTranscriptionStartReservationStale(
-  createdAt: Date | null | undefined,
-  now = Date.now(),
-  staleAfterMs = TRANSCRIPTION_START_STALE_AFTER_MS,
-): boolean {
-  if (!createdAt) return true
-  return now - createdAt.getTime() >= staleAfterMs
-}
-
-export function activeTranscriptionReservationDisposition(input: {
-  projectStatus: ProjectStatus
-  activeTranscriptId: string | null
-  transcript: Pick<TranscriptRow, 'assemblyAiTranscriptId' | 'createdAt'> | null
-  now?: number
-  staleAfterMs?: number
-}): 'none' | 'reuse' | 'wait' | 'cleanup' {
-  if (!input.activeTranscriptId) {
-    return input.projectStatus === 'transcribing' && input.transcript?.assemblyAiTranscriptId ? 'reuse' : 'none'
-  }
-  if (input.transcript?.assemblyAiTranscriptId) {
-    return input.projectStatus === 'transcribing' ? 'reuse' : 'cleanup'
-  }
-  if (
-    input.transcript &&
-    !isTranscriptionStartReservationStale(input.transcript.createdAt, input.now, input.staleAfterMs)
-  ) {
-    return 'wait'
-  }
-  return 'cleanup'
-}
-
 function resolveEditKey(project: Pick<ProjectRow, 'id' | 'workspaceProjectId' | 'status' | 'mediaMetadata'>) {
   const hasPreparedAsset =
     projectHasPreparedEdit(project) ||
@@ -119,11 +87,9 @@ async function reserveProjectTranscriptionStart(input: {
     await tx.execute(sql`select id from projects where id = ${input.projectId} for update`)
 
     const lockedProject =
-      input.project ??
       (
         await tx.select().from(projects).where(eq(projects.id, input.projectId)).limit(1)
-      )[0] ??
-      null
+      )[0] ?? null
 
     if (!lockedProject) {
       throw new ProjectTranscriptionStartError('Project not found', 404)

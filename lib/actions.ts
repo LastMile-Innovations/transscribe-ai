@@ -58,6 +58,7 @@ import {
   assertWorkspaceAccess,
   getAuthUserId,
 } from './workspace-access'
+import { buildWorkspaceProjectId } from './workspace-project-id'
 
 export async function getProjectData(projectId: string, transcriptId?: string | null) {
   await assertProjectAccess(projectId, 'viewer')
@@ -179,7 +180,7 @@ export async function listTranscriptsForMediaAction(mediaId: string): Promise<Tr
 export async function createWorkspaceProjectAction(name: string) {
   const userId = await getAuthUserId()
   if (!userId) throw new Error('Unauthorized')
-  const id = `wp-${Date.now()}`
+  const id = buildWorkspaceProjectId()
   const trimmed = name.trim() || 'Untitled project'
   const row = await insertWorkspaceProjectWithOwner({ id, name: trimmed }, userId)
   return {

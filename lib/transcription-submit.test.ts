@@ -3,7 +3,7 @@ import test from 'node:test'
 import {
   activeTranscriptionReservationDisposition,
   isTranscriptionStartReservationStale,
-} from './transcription-submit'
+} from './transcription-reservation'
 
 test('isTranscriptionStartReservationStale flags missing and expired reservations', () => {
   const now = new Date('2026-04-08T12:00:00.000Z').getTime()
@@ -76,4 +76,29 @@ test('activeTranscriptionReservationDisposition reuses, waits, or cleans up corr
     }),
     'cleanup',
   )
+})
+
+test('reservation decisions follow the locked project state rather than a stale caller snapshot', () => {
+  const now = new Date('2026-04-08T12:00:00.000Z').getTime()
+
+  const staleSnapshotDecision = activeTranscriptionReservationDisposition({
+    projectStatus: 'awaiting_transcript',
+    activeTranscriptId: null,
+    transcript: null,
+    now,
+  })
+
+  const lockedRowDecision = activeTranscriptionReservationDisposition({
+    projectStatus: 'transcribing',
+    activeTranscriptId: 'tx-locked',
+    transcript: {
+      assemblyAiTranscriptId: null,
+      createdAt: new Date('2026-04-08T11:59:45.000Z'),
+    },
+    now,
+    staleAfterMs: 60_000,
+  })
+
+  assert.equal(staleSnapshotDecision, 'none')
+  assert.equal(lockedRowDecision, 'wait')
 })

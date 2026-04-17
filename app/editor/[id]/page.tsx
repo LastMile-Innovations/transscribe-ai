@@ -3,6 +3,7 @@ import EditorPageClient from '@/components/editor-page-client'
 import { TopBar } from '@/components/top-bar'
 import { AppProvider } from '@/lib/app-context'
 import { getProjectData, listTranscriptsForMediaAction } from '@/lib/actions'
+import { loadEditorPageData } from '@/lib/editor-page-data'
 
 export default async function EditorPage({
   params,
@@ -13,17 +14,18 @@ export default async function EditorPage({
 }) {
   const { id } = await params
   const { t } = await searchParams
-  let data
-  let transcriptList
-
+  let pageData
   try {
-    data = await getProjectData(id, t || undefined)
-    transcriptList = await listTranscriptsForMediaAction(id)
+    pageData = await loadEditorPageData({
+      id,
+      transcriptId: t || undefined,
+      getProjectData,
+      listTranscriptsForMediaAction,
+    })
   } catch {
     redirect('/')
   }
-
-  if (!data) {
+  if (!pageData) {
     redirect('/')
   }
 
@@ -31,14 +33,14 @@ export default async function EditorPage({
     <AppProvider
       key={`${id}:${t ?? ''}`}
       initialState={{
-        projects: [data.project],
+        projects: [pageData.data.project],
         activeProjectId: id,
-        transcript: data.transcript,
-        overlays: data.overlays ?? [],
+        transcript: pageData.data.transcript,
+        overlays: pageData.data.overlays ?? [],
       }}
     >
       <div className="flex min-h-dvh flex-col overflow-hidden bg-background">
-        <TopBar project={data.project} initialTranscriptList={transcriptList} />
+        <TopBar project={pageData.data.project} initialTranscriptList={pageData.transcriptList} />
         <EditorPageClient projectId={id} />
       </div>
     </AppProvider>
