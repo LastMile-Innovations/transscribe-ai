@@ -407,7 +407,7 @@ export function LibraryPageClient({
         media: mergeLocalQueuedProjects(prev?.media, initialTree.media, queuedUploadsRef.current),
       }
     })
-  }, [initialTree])
+  }, [initialTree, queuedUploadsRef])
 
   useEffect(() => {
     setBrowseFilter(initialBrowseFilter)

@@ -1,16 +1,23 @@
 import type { Metadata, Viewport } from 'next'
-import {
-  ClerkProvider,
-  Show,
-  SignInButton,
-  SignUpButton,
-  UserButton,
-} from '@clerk/nextjs'
+import { Geist, Geist_Mono } from 'next/font/google'
+import { ClerkProvider } from '@clerk/nextjs'
 import { Analytics } from '@vercel/analytics/next'
 import { ThemeProvider } from '@wrksz/themes/next'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import './globals.css'
+
+const geistSans = Geist({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-geist-sans',
+})
+
+const geistMono = Geist_Mono({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-geist-mono',
+})
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -36,11 +43,15 @@ export const metadata: Metadata = {
   },
 }
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable}`}
+      suppressHydrationWarning
+    >
       <body className="font-sans antialiased">
         <ClerkProvider>
           <ThemeProvider

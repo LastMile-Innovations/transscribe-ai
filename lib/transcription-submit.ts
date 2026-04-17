@@ -5,6 +5,7 @@ import {
   projects,
   transcripts,
   type ProjectRow,
+  type TranscriptRow,
 } from '@/lib/db/schema'
 import { transcriptionProgressFromAssemblyStatus } from '@/lib/assemblyai-transcript-sync'
 import { buildEditObjectKey } from '@/lib/media-keys'
